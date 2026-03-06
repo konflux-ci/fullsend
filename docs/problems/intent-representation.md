@@ -117,11 +117,12 @@ This is where the git-based authorization mechanism (Approach 1) kicks in. The f
 ### Tier 3: Organizational (requires broader consensus)
 
 - Cross-org changes affecting multiple repos
-- Changes to the agentic system itself
-- Changes to security policies
 - Deprecations and removals
+- Changes that affect the public API contract between Konflux and its users
 
 Possibly requires an RFC-like process with a community review period, in addition to the git-based authorization.
+
+Note: changes to the agentic system itself (agent policies, security policies, tier definitions) are a [governance](governance.md) concern, not an intent concern. Those changes are about modifying the rules of the system, not about authorizing work within the system.
 
 ### The key question for each tier
 
@@ -262,4 +263,4 @@ This combination addresses the JIRA ACL weakness, provides audit trails, and sca
 - What's the relationship between intent tiers and CODEOWNERS in the target repos? Are guarded paths a proxy for "changes here are always Tier 2+"?
 - Cross-repo intent: when a feature spans multiple repos, is it one feature file referencing multiple repos, or multiple feature files?
 - How does the "try it" pattern work for changes that can't be meaningfully evaluated without merging? (e.g., infrastructure changes, deployment config)
-- Should the intent repo itself be subject to the agentic system, or is it always human-operated?
+- Who has authority to modify the tier definitions and authorization requirements? (See [governance.md](governance.md))
