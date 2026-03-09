@@ -38,7 +38,7 @@ def test_cli_reports_violations(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd="/home/rbean/code/fullsend/tools/adr46-scanner",
+        cwd="/home/rbean/code/fullsend/experiments/adr46-scanner",
     )
     assert result.returncode == 1
     assert "t" in result.stdout
@@ -65,7 +65,7 @@ def test_cli_clean_exit_no_violations(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd="/home/rbean/code/fullsend/tools/adr46-scanner",
+        cwd="/home/rbean/code/fullsend/experiments/adr46-scanner",
     )
     assert result.returncode == 0
 
@@ -91,7 +91,7 @@ def test_cli_json_output(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd="/home/rbean/code/fullsend/tools/adr46-scanner",
+        cwd="/home/rbean/code/fullsend/experiments/adr46-scanner",
     )
     data = json.loads(result.stdout)
     assert len(data) == 1

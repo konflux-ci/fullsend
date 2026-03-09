@@ -8,7 +8,7 @@ Automated drift detection against architectural decision records (ADRs) is feasi
 
 ## Setup
 
-- **Tool:** Python CLI scanner (`tools/adr46-scanner/`)
+- **Tool:** Python CLI scanner (`experiments/adr46-scanner/`)
 - **ADR:** [ADR-0046: Build a common Task Runner image](https://github.com/konflux-ci/architecture/blob/main/ADR/0046-common-task-runner-image.md)
 - **Target:** The `modelcar-oci-ta` task from [konflux-ci/build-definitions](https://github.com/konflux-ci/build-definitions/blob/main/task/modelcar-oci-ta/0.1/modelcar-oci-ta.yaml)
 - **Config:** Task runner image = `quay.io/konflux-ci/task-runner`, exempt = `quay.io/konflux-ci/build-trusted-artifacts` (per ADR-0046's explicit exception for trusted artifact steps)

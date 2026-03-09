@@ -13,10 +13,10 @@
 ### Task 1: Project scaffolding
 
 **Files:**
-- Create: `tools/adr46-scanner/pyproject.toml`
-- Create: `tools/adr46-scanner/scanner/__init__.py`
-- Create: `tools/adr46-scanner/scanner/cli.py`
-- Create: `tools/adr46-scanner/tests/__init__.py`
+- Create: `experiments/adr46-scanner/pyproject.toml`
+- Create: `experiments/adr46-scanner/scanner/__init__.py`
+- Create: `experiments/adr46-scanner/scanner/cli.py`
+- Create: `experiments/adr46-scanner/tests/__init__.py`
 
 **Step 1: Create pyproject.toml**
 
@@ -51,7 +51,7 @@ def main():
 
 **Step 3: Verify the project installs**
 
-Run: `cd tools/adr46-scanner && pip install -e ".[dev]"`
+Run: `cd experiments/adr46-scanner && pip install -e ".[dev]"`
 Expected: installs successfully
 
 **Step 4: Verify the CLI entry point exists**
@@ -62,7 +62,7 @@ Expected: exits with "Not implemented yet"
 **Step 5: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "feat: scaffold adr46-scanner project"
 ```
 
@@ -71,9 +71,9 @@ git commit -m "feat: scaffold adr46-scanner project"
 ### Task 2: Config file format and loader
 
 **Files:**
-- Create: `tools/adr46-scanner/scanner/config.py`
-- Create: `tools/adr46-scanner/tests/test_config.py`
-- Create: `tools/adr46-scanner/config.yaml`
+- Create: `experiments/adr46-scanner/scanner/config.py`
+- Create: `experiments/adr46-scanner/tests/test_config.py`
+- Create: `experiments/adr46-scanner/config.yaml`
 
 The config declares: the task runner image reference pattern, exempt image patterns (e.g., build-trusted-artifacts), and the target repo/directory to scan.
 
@@ -116,7 +116,7 @@ def test_load_config_missing_required_field(tmp_path):
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_config.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_config.py -v`
 Expected: FAIL — `scanner.config` does not exist
 
 **Step 3: Write the implementation**
@@ -156,7 +156,7 @@ def load_config(path: str) -> ScannerConfig:
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_config.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_config.py -v`
 Expected: PASS (3 tests)
 
 **Step 5: Create the default config file**
@@ -181,7 +181,7 @@ scan_paths:
 **Step 6: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "feat: add config file format and loader for adr46 scanner"
 ```
 
@@ -190,9 +190,9 @@ git commit -m "feat: add config file format and loader for adr46 scanner"
 ### Task 3: Tekton task parser
 
 **Files:**
-- Create: `tools/adr46-scanner/scanner/parser.py`
-- Create: `tools/adr46-scanner/tests/test_parser.py`
-- Create: `tools/adr46-scanner/tests/fixtures/`
+- Create: `experiments/adr46-scanner/scanner/parser.py`
+- Create: `experiments/adr46-scanner/tests/test_parser.py`
+- Create: `experiments/adr46-scanner/tests/fixtures/`
 
 Parse Tekton task YAML files and extract the step images.
 
@@ -260,7 +260,7 @@ def test_parse_non_task_yaml(tmp_path):
 
 **Step 3: Run tests to verify they fail**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_parser.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_parser.py -v`
 Expected: FAIL — `scanner.parser` does not exist
 
 **Step 4: Write the implementation**
@@ -321,13 +321,13 @@ def parse_task(path: Path) -> TektonTask | None:
 
 **Step 5: Run tests to verify they pass**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_parser.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_parser.py -v`
 Expected: PASS (5 tests)
 
 **Step 6: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "feat: add Tekton task YAML parser for adr46 scanner"
 ```
 
@@ -336,8 +336,8 @@ git commit -m "feat: add Tekton task YAML parser for adr46 scanner"
 ### Task 4: Drift detector
 
 **Files:**
-- Create: `tools/adr46-scanner/scanner/detector.py`
-- Create: `tools/adr46-scanner/tests/test_detector.py`
+- Create: `experiments/adr46-scanner/scanner/detector.py`
+- Create: `experiments/adr46-scanner/tests/test_detector.py`
 
 Compare step images against the config to find violations.
 
@@ -405,7 +405,7 @@ def test_mixed_steps(config):
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_detector.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_detector.py -v`
 Expected: FAIL — `scanner.detector` does not exist
 
 **Step 3: Write the implementation**
@@ -446,13 +446,13 @@ def detect_drift(task: TektonTask, config: ScannerConfig) -> list[Violation]:
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_detector.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_detector.py -v`
 Expected: PASS (4 tests)
 
 **Step 5: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "feat: add drift detector comparing step images to task runner"
 ```
 
@@ -461,8 +461,8 @@ git commit -m "feat: add drift detector comparing step images to task runner"
 ### Task 5: Directory scanner
 
 **Files:**
-- Create: `tools/adr46-scanner/scanner/scan.py`
-- Create: `tools/adr46-scanner/tests/test_scan.py`
+- Create: `experiments/adr46-scanner/scanner/scan.py`
+- Create: `experiments/adr46-scanner/tests/test_scan.py`
 
 Walk a directory tree, find Tekton task YAML files, parse them, and run drift detection.
 
@@ -530,7 +530,7 @@ def test_scan_skips_non_task_yaml(tmp_path):
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_scan.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_scan.py -v`
 Expected: FAIL — `scanner.scan` does not exist
 
 **Step 3: Write the implementation**
@@ -560,13 +560,13 @@ def scan_directory(root: Path, config: ScannerConfig) -> list[Violation]:
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_scan.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_scan.py -v`
 Expected: PASS (3 tests)
 
 **Step 5: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "feat: add directory scanner to walk task YAML files"
 ```
 
@@ -575,8 +575,8 @@ git commit -m "feat: add directory scanner to walk task YAML files"
 ### Task 6: CLI and report output
 
 **Files:**
-- Modify: `tools/adr46-scanner/scanner/cli.py`
-- Create: `tools/adr46-scanner/tests/test_cli.py`
+- Modify: `experiments/adr46-scanner/scanner/cli.py`
+- Create: `experiments/adr46-scanner/tests/test_cli.py`
 
 Wire everything together into the CLI. Output a human-readable report to stdout. Support `--json` for machine-readable output.
 
@@ -652,7 +652,7 @@ def test_cli_json_output(tmp_path):
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_cli.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_cli.py -v`
 Expected: FAIL — cli.py is just a placeholder
 
 **Step 3: Write the implementation**
@@ -704,7 +704,7 @@ if __name__ == "__main__":
 
 Also add `__main__.py` so `python -m scanner.cli` works:
 
-Create `tools/adr46-scanner/scanner/__main__.py`:
+Create `experiments/adr46-scanner/scanner/__main__.py`:
 
 ```python
 from scanner.cli import main
@@ -714,18 +714,18 @@ main()
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_cli.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_cli.py -v`
 Expected: PASS (3 tests)
 
 **Step 5: Run all tests**
 
-Run: `cd tools/adr46-scanner && pytest -v`
+Run: `cd experiments/adr46-scanner && pytest -v`
 Expected: PASS (all 15 tests)
 
 **Step 6: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "feat: wire up CLI with human-readable and JSON output"
 ```
 
@@ -734,14 +734,14 @@ git commit -m "feat: wire up CLI with human-readable and JSON output"
 ### Task 7: Integration test against real modelcar-oci-ta task
 
 **Files:**
-- Create: `tools/adr46-scanner/tests/fixtures/modelcar-oci-ta.yaml`
-- Create: `tools/adr46-scanner/tests/test_modelcar.py`
+- Create: `experiments/adr46-scanner/tests/fixtures/modelcar-oci-ta.yaml`
+- Create: `experiments/adr46-scanner/tests/test_modelcar.py`
 
 Copy the real modelcar-oci-ta task YAML into fixtures and verify the scanner catches the expected violations.
 
 **Step 1: Fetch the real task YAML**
 
-Run: `gh api repos/konflux-ci/build-definitions/contents/task/modelcar-oci-ta/0.1/modelcar-oci-ta.yaml -q '.content' | base64 -d > tools/adr46-scanner/tests/fixtures/modelcar-oci-ta.yaml`
+Run: `gh api repos/konflux-ci/build-definitions/contents/task/modelcar-oci-ta/0.1/modelcar-oci-ta.yaml -q '.content' | base64 -d > experiments/adr46-scanner/tests/fixtures/modelcar-oci-ta.yaml`
 
 **Step 2: Write the test**
 
@@ -793,18 +793,18 @@ def test_modelcar_oci_ta_drift():
 
 **Step 3: Run the test**
 
-Run: `cd tools/adr46-scanner && pytest tests/test_modelcar.py -v`
+Run: `cd experiments/adr46-scanner && pytest tests/test_modelcar.py -v`
 Expected: PASS
 
 **Step 4: Run all tests**
 
-Run: `cd tools/adr46-scanner && pytest -v`
+Run: `cd experiments/adr46-scanner && pytest -v`
 Expected: PASS (all 16 tests)
 
 **Step 5: Commit**
 
 ```bash
-git add tools/adr46-scanner/
+git add experiments/adr46-scanner/
 git commit -m "test: verify scanner catches all modelcar-oci-ta ADR-0046 violations"
 ```
 
