@@ -19,7 +19,10 @@ This is not a product spec. It's an evolving exploration of a hard problem space
   - [Governance](docs/problems/governance.md) — Who controls the agents and their configuration?
   - [Repo Readiness](docs/problems/repo-readiness.md) — Test coverage, CI/CD maturity, what's needed before agents can be trusted
   - [Code Review](docs/problems/code-review.md) — How agents review code, including security-focused sub-agents
+  - [Tekton Pipeline Review](docs/problems/tekton-pipeline-review.md) — Reviewing Tekton task and pipeline definitions as a distinct domain
   - [Architectural Invariants](docs/problems/architectural-invariants.md) — Enforcing things that must always be true, grounded in the existing architecture repo
+  - [Multi-tenancy](docs/problems/multi-tenancy.md) — How agents understand and preserve tenant isolation boundaries
+  - [Migration Path](docs/problems/migration-path.md) — How to get from today's workflow to agent-driven development incrementally
 - **[docs/landscape.md](docs/landscape.md)** — Survey of existing AI code review tools and how they relate to our goals (time-sensitive — check the date)
 - **[docs/experiments/](docs/experiments/)** — Logs and results from trying things in practice
 

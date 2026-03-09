@@ -19,7 +19,10 @@ docs/
     governance.md                   # Who controls the agents and their config
     repo-readiness.md               # Test coverage baseline and readiness criteria
     code-review.md                  # How agents review code, security sub-agents
+    tekton-pipeline-review.md       # Reviewing Tekton tasks/pipelines as a distinct domain
     architectural-invariants.md     # Enforcing things that must always be true
+    multi-tenancy.md                # How agents preserve tenant isolation boundaries
+    migration-path.md               # Incremental path from human-driven to agent-driven
   landscape.md                      # Survey of AI code review tools (time-sensitive)
   experiments/                      # Logs/results from practical experiments
 ```

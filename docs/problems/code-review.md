@@ -158,6 +158,56 @@ A human reviewer can say "I'm not sure about this, let me think" or "I need some
 - How does an agent express uncertainty? Confidence scores? Explicit "I don't know" signals?
 - Should there be a minimum number of agent reviewers that agree before auto-merge?
 
+## The heterogeneous codebase problem
+
+The sub-agent decomposition above implicitly assumes reviewing Go code — controllers, operators, services. But konflux-ci is heterogeneous. The org contains Go controllers, React frontends, Tekton task/pipeline YAML with embedded shell, Python tooling, and pure shell scripts. A "correctness agent" for a Go reconciler and a "correctness agent" for a Tekton task are solving fundamentally different problems.
+
+### Tekton task review is a distinct discipline
+
+Reviewing a Tekton task change is not like reviewing application code. The concerns are different:
+
+- **Embedded shell scripts** — most task logic lives in `script:` fields inside step definitions. These are shell scripts embedded in YAML, which means the review agent needs to understand bash semantics (quoting, word splitting, exit codes, pipelines, subshells) *and* the YAML embedding (indentation sensitivity, multiline strings). A Go correctness agent won't catch `$VARIABLE` vs `${VARIABLE}` bugs or missing `set -euo pipefail`.
+- **Image references** — each step declares a container image. Reviewing whether the right image is used, whether digest pinning is correct, whether the image actually contains the tools the script calls — this is a supply chain concern that doesn't exist in normal code review. See [architectural-invariants.md](architectural-invariants.md) and the ADR-0046 drift scanner experiment for how this plays out in practice.
+- **Result propagation** — Tekton tasks communicate between steps and between tasks via results (written to `/tekton/results/`). A common bug class is result name mismatches: task A writes to `IMAGE_URL`, task B reads `IMAGE_DIGEST`. This is a stringly-typed interface with no compile-time checking. A review agent needs to trace result flows across the pipeline, not just within a single task.
+- **Workspace and volume bindings** — tasks declare workspaces; pipelines bind them. A mismatch means silent data loss or a task reading stale data from a previous run. This is another cross-boundary concern that per-file review misses.
+- **Parameter threading** — parameters flow from pipeline → task → step script via `$(params.foo)` substitution. Missing parameters, wrong types, or unused parameters are common bugs that require understanding the full parameter chain.
+- **When expressions and matrix** — conditional execution and fan-out patterns add control flow that lives in YAML, not in code. Reviewing whether the conditions are correct requires understanding both the YAML semantics and the pipeline's intended behavior.
+
+### What this means for the sub-agent model
+
+The current 6-agent decomposition may need a 7th: a **pipeline/task domain agent** that understands Tekton semantics specifically. Alternatively, the correctness agent needs to be parameterized per content type — one profile for Go, one for Tekton YAML, one for shell scripts. Either way, treating all code review as homogeneous will produce poor results on the repos that matter most (build-definitions defines every build pipeline in the system).
+
+See also [tekton-pipeline-review.md](tekton-pipeline-review.md) for a deeper treatment of this problem.
+
+## What human reviewers actually catch (and miss)
+
+The sub-agent model is well-reasoned in theory. But grounding it in what actually happens during human review reveals gaps and opportunities.
+
+### What experienced human reviewers catch that agents will struggle with
+
+- **"This works but it's the wrong approach"** — a PR that correctly implements a feature but creates a maintenance burden, introduces an unnecessary dependency, or solves the problem at the wrong layer. This requires taste and experience with the codebase's evolution, not just correctness checking.
+- **"This interacts badly with X"** — cross-system awareness. A change to the build-service that looks correct in isolation but breaks an assumption the integration-service makes. Human reviewers catch this because they've been burned before. Agents would need explicit cross-repo dependency models.
+- **"We tried this before and it didn't work"** — institutional memory. A PR that reintroduces a pattern that was previously removed for good reasons. This is in the git history, but surfacing it requires knowing *what to look for*.
+- **"This is technically a bug fix but it changes user-visible behavior"** — the tier escalation problem from [intent-representation.md](intent-representation.md), but at the code review level. Experienced reviewers recognize when a "fix" is actually a behavior change that needs broader discussion.
+
+### What human reviewers miss that agents could be better at
+
+- **Consistent application of conventions** — humans get tired and inconsistent across reviews. Agents can mechanically verify every naming convention, error handling pattern, and API contract every time.
+- **Comprehensive edge case analysis** — humans skim happy paths and spot-check edge cases. Agents can systematically enumerate error conditions, nil checks, and boundary values.
+- **Cross-file impact analysis** — humans often review file-by-file. Agents can trace a change through the call graph and identify every affected code path.
+- **Dependency version analysis** — checking whether a dependency update introduces known vulnerabilities, behavioral changes, or license issues. Tedious for humans, natural for agents.
+- **Detecting subtle injection patterns** — prompt injection in code comments, commit messages, and string literals. Humans don't think about this; agents can be specifically trained to look for it.
+
+### The implication for sub-agent design
+
+The "what humans catch that agents won't" list suggests the sub-agents need more than just the diff and surrounding code. They need:
+
+- **Codebase history** — not just current state, but why things are the way they are
+- **Cross-repo dependency models** — explicit maps of which repos depend on which, and at what interfaces
+- **"Previously rejected" patterns** — a knowledge base of approaches that were tried and abandoned, with reasons
+
+These are expensive context sources. The question is whether they're loaded proactively (into every review) or reactively (when a sub-agent's confidence is low and it wants more context before escalating).
+
 ## Open questions
 
 - Can we quantify review quality? How do we know if an agent's review is as good as a human's?
@@ -166,3 +216,6 @@ A human reviewer can say "I'm not sure about this, let me think" or "I need some
 - How do we prevent review agents from being "rubber stamps" — always approving because they're optimizing for throughput?
 - What's the right interface for review feedback? GitHub PR comments? A structured report? Both?
 - How do we handle multi-repo changes where the review needs to consider changes across repos together?
+- How do we handle the heterogeneity of content types across the org? One correctness agent, or specialized agents per content type?
+- Should review agents have different context loading strategies for different repo types (Go service vs. Tekton tasks vs. React frontend)?
+- How do we capture and expose "institutional memory" to review agents without creating an injection surface?
