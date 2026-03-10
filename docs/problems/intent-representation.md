@@ -62,7 +62,12 @@ Each feature is a file (YAML? Markdown with frontmatter?) that moves between dir
 
 ### The "try it" phase
 
-Moving from `proposed/` to `explored/` just means an agent builds a draft PR against the target repo so stakeholders can see what the change looks like. This draft PR *cannot merge* — it's gated on the feature file being in `approved/`. Low cost, high information value. This decouples *understanding a change* from *authorizing a change*.
+Moving from `proposed/` to `explored/` just means an agent builds a draft PR against the target repo so stakeholders can see what the change looks like.
+
+For some types of change this phase *could* leverage a **vibe-to-spec** workflow. Developers use AI to rapidly *simulate* the feature's behavior to discover friction points before any production logic is written. Once the "vibe" is validated, the exploration is thrown away, and the AI generates the formal `spec-kit`-like requirements document.
+
+Any draft PR created at this stage cannot merge — it's gated on the generated feature file being in approved/. Low cost, high information value. This decouples understanding a change from authorizing a change.
+
 
 ### The "ship it" phase
 
@@ -233,7 +238,7 @@ Review agents must independently assess what tier a change *actually* represents
 
 - **Scope analysis** — does this change add new behavior, or fix existing behavior? Adding new API endpoints is not a bug fix, even if the issue says "bug."
 - **Impact analysis** — does this change affect security, UX, or API surface? If so, it's at least Tier 2 regardless of the issue label.
-- **Intent verification** — does the linked issue actually describe what this PR does? A PR that goes beyond its linked issue is suspect.
+- **Intent verification** — does the linked issue actually describe what this PR does? And does the code do exactly what the intent file says, and nothing more? The vibe-to-spec workflow gives the agent a strict checklist. If someone tries to sneak a major new feature into a low-tier bug fix, the agent will automatically block it because the extra code won't match the generated spec.
 - **Pattern detection** — multiple "small" changes from the same source that collectively add up to a feature should trigger escalation.
 
 This applies equally to review agents looking at code PRs *and* to agents evaluating intent changes in the intent repo itself. A low-tier intent statement that describes something high-impact should be flagged and escalated.
@@ -258,7 +263,7 @@ This combination addresses the JIRA ACL weakness, provides audit trails, and sca
 - How do we handle emergent changes — a "small bug fix" that reveals a deeper architectural issue requiring Tier 2+ authorization?
 - Can intent be composed? If three Tier 1 changes together constitute an unauthorized Tier 2 feature, who notices?
 - How do we prevent the intent repo from becoming a bottleneck at agent speed?
-- What does the feature file format look like? How much structure is needed for agents to evaluate programmatically?
+- What does the feature file format look like? How much structure is needed for agents to evaluate programmatically, and could an AI-driven "vibe-to-spec" workflow using tools like spec-kit reliably generate this required structure (functional requirements, acceptance scenarios, state machines etc) directly from rapid human prototyping?
 - How do we handle the migration from JIRA? Can the two systems coexist during transition?
 - What's the relationship between intent tiers and CODEOWNERS in the target repos? Are guarded paths a proxy for "changes here are always Tier 2+"?
 - Cross-repo intent: when a feature spans multiple repos, is it one feature file referencing multiple repos, or multiple feature files?
