@@ -23,6 +23,7 @@ This is not a product spec. It's an evolving exploration of a hard problem space
   - [Architectural Invariants](docs/problems/architectural-invariants.md) — Enforcing things that must always be true, grounded in the existing architecture repo
   - [Agent-Compatible Code](docs/problems/agent-compatible-code.md) — Language properties that affect agent effectiveness
   - [Codebase Context](docs/problems/codebase-context.md) — How agents acquire codebase understanding and how to structure org-level context
+  - [Contributor Guidance](docs/problems/contributor-guidance.md) — Making contribution rules clear to both humans and machines, without requiring AI to participate
 - **[docs/landscape.md](docs/landscape.md)** — Survey of existing AI code review tools and how they relate to our goals (time-sensitive — check the date)
 - **[docs/experiments/](docs/experiments/)** — Logs and results from trying things in practice
 

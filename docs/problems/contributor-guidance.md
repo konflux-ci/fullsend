@@ -1,0 +1,317 @@
+# Contributor Guidance
+
+How do we make Konflux contribution rules clear to both human contributors and AI agents — without requiring contributors to use AI themselves?
+
+## Why this matters
+
+Konflux aspires to be an "upstream" open source project capable of accepting contributions from the general public. Contributors range from individual hobbyists to engineers at large corporations, with varying levels of familiarity with Konflux's architecture and conventions.
+
+If agents are actively developing Konflux, the contribution process must work for:
+
+- **Human-only contributors** — someone opening their first PR with no AI tooling
+- **Human-assisted contributors** — someone using AI to help write code but driving the process themselves
+- **Agent-driven contributors** — an organization's internal agent submitting PRs on behalf of its team
+- **Hybrid teams** — a mix of the above working on the same codebase
+
+The challenge: optimizing for agent workflows can make things harder for humans, and vice versa. The solution must serve both.
+
+## The core problem: implicit vs. explicit knowledge
+
+The fundamental issue isn't about machine-readable formats vs. human-readable documentation. AI coding assistants (Claude, GitHub Copilot, Cursor) understand natural language just fine. The problem is **what's written down vs. what's learned through participation**:
+
+**Humans learn through:**
+- Asking questions in Slack, issues, or PR comments
+- Watching what gets approved vs. rejected in code review
+- Mentorship from experienced contributors
+- Institutional memory ("we tried that approach in 2023 and it caused problems")
+- Understanding *why* through context they absorb over time
+
+**Autonomous AI agents only have:**
+- What's written in the repository (docs, code, git history)
+- They can't ask clarifying questions to humans
+- They can't attend meetings or hear hallway conversations
+- They don't absorb institutional knowledge over time
+- They can't learn from "we discussed this last quarter and decided..."
+
+This creates a **verbosity gap**: to enable AI agents, we need to write down all the institutional knowledge that humans currently absorb through participation. But making documentation that verbose can overwhelm human contributors who don't need all that detail.
+
+## The two-audience problem
+
+Every contribution guideline, every architecture decision record, every CODEOWNERS constraint serves two audiences now:
+
+1. **Humans** who learn contribution norms through word of mouth, mentorship, and institutional knowledge
+2. **AI agents** (like Claude, GitHub Copilot, or Cursor) that only have access to what's written down in the repository
+
+These audiences have different needs:
+
+| Audience | How they learn | What they need in documentation |
+|---|---|---|
+| Human contributor | Mentorship, community interaction, "word of mouth" | Enough context to get started; can ask questions and learn the rest |
+| AI agent | Only written documentation in the repo | Everything explicit and written down; can't ask mentors or attend meetings |
+| Human reviewer | Institutional knowledge from being involved in the project | Written rationale they can reference; fills gaps with experience |
+| AI agent reviewer | Only written architectural decisions and policies | Complete decision history and rationale; can't rely on "we discussed this last quarter" |
+
+Today's open source contribution guides assume humans will learn the unwritten norms through community participation: "Be respectful. Follow the code style. Write tests. Open an issue first for large changes." This works because humans can:
+
+- Ask clarifying questions on Slack or in issue comments
+- Learn by watching what gets approved vs rejected
+- Absorb institutional knowledge from code review discussions
+- Understand implied context ("we prefer X over Y" → because we had a bad experience with Y last year)
+
+AI agents can't do any of this. They need everything to be explicit and written down. But making everything explicit shouldn't mean making it machine-readable or overly structured — agents like Claude can understand natural language just fine. The challenge is **verbosity and completeness**, not format.
+
+## What contributors need to know
+
+At a minimum, any contributor (human or agent) needs to understand:
+
+### Tier classification
+
+Is my change a bug fix, a small improvement, a new feature, or an architectural change? The [intent representation](intent-representation.md) tier system exists, but:
+
+- Can a new contributor reliably classify their own change?
+- If they misclassify (intentionally or not), how does the system course-correct?
+- Are the tier definitions publicly documented in a way that's discoverable?
+
+### Authorization requirements
+
+What approvals does my change need? Tier 0 (standing rules) needs none. Tier 1 (tactical) needs a linked issue. Tier 2+ (strategic) needs explicit authorization. But:
+
+- How does a first-time contributor know this?
+- If they're fixing what they perceive as a bug, do they need to understand that some "bugs" are actually feature requests requiring higher-tier authorization?
+- What happens if they submit a PR without the required authorization? Is there a helpful error message, or does it just languish?
+
+### Repository-specific conventions
+
+Each Konflux repo may have its own CODEOWNERS boundaries, architectural invariants, and local conventions. How does a contributor discover these?
+
+- **CONTRIBUTING.md** — Human-oriented guidelines, often concise
+- **CLAUDE.md** (if present) — Verbose, detailed context for AI assistants; captures institutional knowledge that humans would learn through participation
+- **Architecture docs** in the konflux-ci/architecture repo — Cross-repo invariants and design decisions
+- **CODEOWNERS** — Shows *who* reviews *what*, but not *why* those paths are guarded (the "why" should be documented elsewhere)
+- **Git history and merged PRs** — Patterns and conventions shown through example
+
+Human contributors can ask questions to fill gaps. AI assistants need it all written down. A contributor needs to know which of these exist and where to find them.
+
+### Testing and CI expectations
+
+What tests need to pass before a PR is mergeable? What's the difference between a CI failure that's a legitimate block vs. a known flaky test?
+
+- Humans can ask: "CI failed but I see this test is flaky — should I retry?" or "How do I run the integration tests locally?"
+- AI assistants need this documented: "Known flaky tests: X, Y, Z — these can be retried. To run integration tests locally: [commands]"
+
+### The "try before you commit" path
+
+For exploratory contributions ("I think this might fix the issue but I'm not sure"), what's the low-friction path to get feedback?
+
+- Draft PRs are the GitHub-native answer
+- Humans can also ask on Slack or in issue comments: "Would this approach work?"
+- AI assistants opening PRs on behalf of contributors should understand when to use draft PRs for exploratory changes
+- If AI agents are doing triage and review, they need clear guidance: do they review drafts the same as ready-for-review PRs? Should they provide feedback or wait until the draft is marked ready?
+
+## Approaches
+
+### Approach 1: Make implicit knowledge explicit
+
+Write down everything that's currently communicated through word of mouth, mentorship, or institutional memory:
+
+- **Why we prefer certain patterns** — "We use controller-runtime's predicate functions rather than manual filtering because we had memory leaks with the manual approach in 2024"
+- **Historical context for decisions** — "The CRD schema uses webhooks for validation rather than CEL because CEL wasn't mature enough when we designed this in 2023"
+- **Common mistakes and how to avoid them** — "New contributors often forget to update the mock when changing an interface. Run `make generate` to catch this."
+- **Unwritten conventions** — "We prefer table-driven tests. See `pkg/controller/component_test.go` for the pattern."
+
+This isn't a separate CLAUDE.md for agents vs CONTRIBUTING.md for humans. It's making the existing CONTRIBUTING.md and architecture docs more complete and explicit, so both humans and agents can learn from them.
+
+**Pros:** Single source of truth. Benefits humans too (especially new contributors). No special formats or duplication.
+
+**Cons:** Requires discipline to capture institutional knowledge as it emerges. Risk of becoming encyclopedic and overwhelming. Needs curation to stay relevant.
+
+### Approach 2: Verbose CLAUDE.md for agent-specific context
+
+Keep CONTRIBUTING.md as a concise human-oriented guide, but add CLAUDE.md (or similar) that contains the verbose, explicit instructions that agents need. Humans aren't expected to read this — it's supplementary context for AI assistants.
+
+Example CLAUDE.md content:
+```
+When reviewing changes to CRD schemas:
+- Check if there's a corresponding update in the architecture repo's API contracts document
+- If the change affects the Snapshot CRD, the integration-service repo likely needs updates too
+- Breaking changes require a deprecation period - see docs/api-compatibility.md
+- All new fields must have validation - we had production incidents from unvalidated enum fields in Q3 2024
+```
+
+This captures the kind of context a human reviewer would know from being part of the project, but that isn't obvious from reading the code.
+
+**Pros:** Doesn't make CONTRIBUTING.md overwhelming. Agents get the context they need without forcing humans to wade through it.
+
+**Cons:** Maintenance burden of keeping two files in sync. Humans might not know CLAUDE.md exists or affects how agents behave. Risk of divergence between the two.
+
+### Approach 3: Layered documentation with progressive disclosure
+
+Not all contributors need to know all rules. Structure guidance by contribution complexity:
+
+| Tier | Contributor persona | What they need |
+|---|---|---|
+| **First-time** | Opening first PR, fixing a typo or small bug | Minimal friction: where to open PR, how to run tests, basic code style |
+| **Occasional** | Has contributed before, submitting bug fixes or small improvements | Tier classification, issue linkage, CODEOWNERS awareness |
+| **Regular** | Frequent contributor, proposing features or architectural changes | Full intent system, authorization process, cross-repo impact analysis |
+| **Core maintainer** | Has commit access, reviewing others' work | Governance model, agent configuration, security threat model |
+
+AI agents acting on behalf of regular contributors should have access to all layers, since they can't gradually absorb knowledge through repeated participation.
+
+**Pros:** Reduces cognitive load for new human contributors. Avoids overwhelming people with rules they don't need yet.
+
+**Cons:** Agents need to know which layer applies to a given task. Risk of humans skipping important context when they graduate to more complex contributions.
+
+### Approach 4: AI-assisted onboarding and feedback
+
+When a human contributor opens a PR, an AI agent (acting as a reviewer/helper) provides contextual guidance:
+
+- "This change touches API surface, which requires human CODEOWNERS approval — see [link] for details"
+- "This looks like a Tier 2 feature. You'll need to open an intent proposal at [repo] first."
+- "CI is failing because [specific test]. Here's how to run it locally: [command]"
+
+This serves human contributors who opened the PR themselves. It doesn't apply to PRs opened by AI agents on behalf of contributors — those agents should have already validated the requirements before opening the PR.
+
+**Pros:** Guidance appears exactly when needed for humans. Reduces documentation burden. Can help humans learn the implicit rules.
+
+**Cons:** Requires AI review agents to be deployed and reliable. May feel intrusive or patronizing if done poorly. Doesn't help contributors *before* they submit a PR. Creates a potential divide between "AI-helped" and "unassisted" contributors.
+
+### Approach 5: Public contribution checklist
+
+Make the review criteria public and explicit. Before submitting a PR, contributors (or their AI assistants) can see exactly what will be checked:
+
+- [ ] Tier classification: _____
+- [ ] Linked issue (if Tier 1+): _____
+- [ ] Authorization record (if Tier 2+): _____
+- [ ] Tests added/updated: yes/no
+- [ ] CODEOWNERS approval needed: yes/no (auto-detected)
+- [ ] Architectural invariants verified: yes/no
+
+This checklist is the same whether a human manually verifies it or their AI assistant checks it before opening the PR.
+
+**Pros:** Transparency. No surprises. Humans can self-check before submitting. AI assistants can validate requirements proactively.
+
+**Cons:** Checklist needs to be comprehensive yet not overwhelming. May feel bureaucratic for small changes. Humans might skip it; AI assistants might over-rely on it.
+
+## The "no agent required" principle
+
+A critical constraint: **using AI must not be required to contribute to Konflux.**
+
+This means:
+
+- Humans without AI assistants can still contribute successfully
+- Documentation should be readable by humans, not just comprehensive enough for AI
+- Contribution processes must work without AI tooling
+- Humans can ask questions, get mentorship, and learn through participation
+- AI-assisted contributions shouldn't get systematically faster processing or better treatment
+
+This is both a practical accessibility concern and a philosophical one. Open source should be open to everyone, including those who:
+- Choose not to use AI for personal or professional reasons
+- Cannot afford commercial AI services
+- Are learning and want to engage directly without AI mediation
+- Work in environments where AI tools are restricted
+
+The goal: make implicit knowledge explicit (which helps AI agents) **without** making contribution so bureaucratic that it requires AI assistance to navigate.
+
+## How AI agents can help (without being required)
+
+AI coding assistants (like Claude, GitHub Copilot, Cursor) can enhance the contribution experience without being mandatory:
+
+### When assisting human contributors
+
+A human working with an AI assistant (e.g., using Claude Code, GitHub Copilot Workspace):
+
+- **Pre-flight validation** — Before the human opens a PR, the AI can check: "This change touches CRD schemas, which are CODEOWNERS-protected. You'll need approval from @konflux-architects."
+- **Tier classification** — "Based on this change, this looks like a Tier 2 feature because it adds new API surface. You'll need to open an intent proposal first."
+- **Context from documentation** — The AI reads all the architecture docs, CONTRIBUTING.md, and CLAUDE.md to give the human answers to "how do I..." questions
+- **Learning institutional knowledge** — "Looking at recent merged PRs, the convention is to use table-driven tests. Want me to refactor your test to follow that pattern?"
+- **Historical context** — "I see in the git history that this code was refactored in PR #456 to avoid memory leaks. Let me make sure your change doesn't reintroduce that issue."
+
+### When acting autonomously on behalf of a team
+
+An AI agent opening PRs on behalf of a development team (e.g., automated refactoring, dependency updates):
+
+- **Pre-submission validation** — Verify all requirements (tier, authorization, tests, CODEOWNERS) before opening the PR
+- **Complete context ingestion** — Read all docs, ADRs, recent merged PRs to understand conventions
+- **Compliance with unwritten norms** — Follow patterns discovered from reading the codebase and git history
+- **Cross-repo coordination** — Handle multi-repo changes by understanding dependencies documented in architecture repo
+
+The key difference: **human-assisted** work still involves human decision-making (the AI is a tool). **Autonomous** work requires the AI to have ingested enough institutional knowledge to make good decisions independently — which is why explicit documentation is critical.
+
+## Discoverability
+
+How does a new contributor find the contribution guidelines?
+
+### Standard locations
+
+- **CONTRIBUTING.md in repo root** — GitHub displays this automatically
+- **Link from README.md** — many contributors start here
+- **PR template** — auto-populated when opening a PR
+- **Links in agent responses** — if an agent comments on a PR, include links to relevant docs
+
+### Org-wide vs. repo-specific
+
+- Some rules are organization-wide (intent tiers, security policies)
+- Some are repo-specific (local conventions, CODEOWNERS boundaries)
+- Contributors need to know which is which and where to find both
+
+Possible structure:
+- `konflux-ci/.github` repo contains org-wide CONTRIBUTING.md
+- Individual repos can extend with repo-specific guidelines
+- AI assistants can read and synthesize both when helping contributors
+
+## The feedback loop problem
+
+A contributor submits a PR. A reviewer (human or AI) finds issues. What happens next?
+
+### For human contributors (reviewing or being reviewed)
+
+- Feedback must be actionable: not just "this violates rule X" but "here's how to fix it"
+- Tone matters: reviewers (AI or human) should be helpful, not adversarial
+- Opportunity to learn: explain *why* the rule exists, not just what it is
+
+### For AI-assisted contributors
+
+When an AI is helping a human respond to review feedback:
+
+- The AI needs to understand the feedback (easy if it's clear prose)
+- The AI should help the human understand *why* the change is needed, not just make the change blindly
+- The AI can search the codebase and docs for context: "The reviewer is asking for tests because all API handlers require test coverage per docs/testing.md"
+
+When an AI opened the PR autonomously and receives feedback:
+
+- The AI needs to parse the feedback and determine what changes are needed
+- Clear, specific feedback helps: "please improve test coverage" is vague; "add tests for the new `HandleRequest` function" is actionable
+- The AI should be able to understand natural language feedback — it doesn't need structured error codes
+
+### The challenge
+
+The challenge isn't format (AI can parse natural language). The challenge is **specificity and completeness**:
+
+- Vague feedback ("this doesn't follow our conventions") is hard for anyone (human or AI) to act on
+- Specific feedback ("we prefer table-driven tests — see `component_test.go` for an example") is actionable for both
+
+The solution: reviewers (human or AI) should give specific, actionable feedback with references to examples or docs. This serves both human and AI audiences.
+
+## Relationship to other problem areas
+
+- **[Intent representation](intent-representation.md)** — the tier system must be explained to contributors
+- **[Code review](code-review.md)** — review expectations and criteria must be transparent
+- **[Governance](governance.md)** — who decides what rules contributors must follow?
+- **[Autonomy spectrum](autonomy-spectrum.md)** — CODEOWNERS boundaries affect what changes contributors can make
+- **[Architectural invariants](architectural-invariants.md)** — contributors need to know what constraints exist
+
+## Open questions
+
+- Should tier classification be self-reported by contributors or determined by reviewers (human or AI)? What if they disagree?
+- How do we handle the learning curve for new human contributors who don't yet understand the intent system, while also providing enough written context for AI assistants?
+- What's the right balance between "helpful guidance" (from AI reviewer agents) and "intrusive gatekeeping"? How do we ensure AI feedback is constructive?
+- How do we measure whether contribution guidance is working? (time to first PR merge? contributor retention? reduction in misclassified changes? satisfaction of AI-assisted vs. unassisted contributors?)
+- Should there be a "sandbox" repo where contributors can experiment without worrying about tier classification and authorization?
+- How do we handle contributions from organizations that have their own AI agents opening PRs? Do external AI assistants need special guidance beyond what's in CONTRIBUTING.md and CLAUDE.md?
+- What happens when a human contributor disagrees with an AI reviewer's classification or feedback? Is there an escalation path to human reviewers?
+- How do we keep contribution documentation up-to-date as the agent system evolves? Who is responsible for capturing new institutional knowledge as it emerges?
+- Should contribution guidelines be versioned? If the tier definitions change, how do in-flight contributions handle the transition?
+- How do we avoid creating a "two-class" system where AI-assisted contributions get faster processing than unassisted human contributions?
+- How verbose is too verbose? At what point does comprehensive documentation (helpful for AI) become overwhelming for human contributors?
+- Should we explicitly signal which documentation is "need to know" for humans vs. "supplementary context" primarily for AI assistants?
+- How do we capture and document the "why" behind decisions when that context is currently tribal knowledge?
