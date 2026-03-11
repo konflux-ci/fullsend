@@ -94,19 +94,20 @@ Human contributors can ask questions to fill gaps. AI assistants need it all wri
 
 ### Testing and CI expectations
 
-What tests need to pass before a PR is mergeable? What's the difference between a CI failure that's a legitimate block vs. a known flaky test?
+What tests need to pass before a PR is mergeable? What's the difference between a CI failure that's a legitimate block vs. infrastructure issues?
 
-- Humans can ask: "CI failed but I see this test is flaky — should I retry?" or "How do I run the integration tests locally?"
-- AI assistants need this documented: "Known flaky tests: X, Y, Z — these can be retried. To run integration tests locally: [commands]"
+- Humans can ask: "CI failed but I think it's unrelated to my change — should I retry?" or "How do I run the integration tests locally?"
+- AI assistants need this documented: "Tests should be deterministic. Flaky tests should be fixed or removed rather than documented as 'known issues' — they provide a confusing signal. To run integration tests locally: [commands]"
 
 ### The "try before you commit" path
 
 For exploratory contributions ("I think this might fix the issue but I'm not sure"), what's the low-friction path to get feedback?
 
-- Draft PRs are the GitHub-native answer
+- **Draft PRs** are the GitHub-native answer — they signal "work in progress, feedback welcome" regardless of who opens them (human or agent)
 - Humans can also ask on Slack or in issue comments: "Would this approach work?"
 - AI assistants opening PRs on behalf of contributors should understand when to use draft PRs for exploratory changes
-- If AI agents are doing triage and review, they need clear guidance: do they review drafts the same as ready-for-review PRs? Should they provide feedback or wait until the draft is marked ready?
+- Draft status is about the state of the work, not about who submitted it — the same exploratory/iterative workflow applies whether the PR comes from a human experimenting or an agent exploring alternatives
+- Review agents should provide feedback on draft PRs (helping iterate toward a good solution) but shouldn't block merge — draft means "not ready yet"
 
 ## Approaches
 
@@ -123,30 +124,39 @@ This isn't a separate CLAUDE.md for agents vs CONTRIBUTING.md for humans. It's m
 
 **Pros:** Single source of truth. Benefits humans too (especially new contributors). No special formats or duplication.
 
-**Cons:** Requires discipline to capture institutional knowledge as it emerges. Risk of becoming encyclopedic and overwhelming. Needs curation to stay relevant.
+**Cons:** Requires discipline to capture institutional knowledge as it emerges. Risk of becoming encyclopedic and overwhelming. Needs curation to stay relevant. Documentation updates should be triggered when patterns emerge from multiple sources (code reviews, agent feedback, repeated questions).
 
-### Approach 2: Verbose CLAUDE.md for agent-specific context
+### Approach 2: Minimal CLAUDE.md with references to CONTRIBUTING.md
 
-Keep CONTRIBUTING.md as a concise human-oriented guide, but add CLAUDE.md (or similar) that contains the verbose, explicit instructions that agents need. Humans aren't expected to read this — it's supplementary context for AI assistants.
+Keep CLAUDE.md minimal (under 60 lines, per research from ETH Zürich showing verbose context hurts agent performance by 20%+), but have it reference comprehensive content in CONTRIBUTING.md. This creates a single source of truth that serves both humans and agents.
 
-Example CLAUDE.md content:
+CLAUDE.md should contain:
+- **Links to CONTRIBUTING.md sections** — point agents to the comprehensive human-readable guidance
+- **Non-obvious context only** — what agents cannot discover from reading the code
+- **BOOKMARKS.md references** — for progressive disclosure of additional context (architectural docs, API conventions, etc.)
+
+Example minimal CLAUDE.md:
 ```
-When reviewing changes to CRD schemas:
-- Check if there's a corresponding update in the architecture repo's API contracts document
-- If the change affects the Snapshot CRD, the integration-service repo likely needs updates too
-- Breaking changes require a deprecation period - see docs/api-compatibility.md
-- All new fields must have validation - we had production incidents from unvalidated enum fields in Q3 2024
+See CONTRIBUTING.md for full contribution guidelines. Key non-obvious points:
+
+- CRD schema changes: see CONTRIBUTING.md#api-changes. Always check architecture repo.
+- We had production incidents from unvalidated enum fields in Q3 2024 - all new fields need validation.
+- Cross-repo impact: if changing Snapshot CRD, integration-service likely needs updates.
+
+See BOOKMARKS.md for architectural context and external standards.
 ```
 
-This captures the kind of context a human reviewer would know from being part of the project, but that isn't obvious from reading the code.
+The comprehensive content lives in CONTRIBUTING.md, where both humans and agents can access it. CLAUDE.md is just the "non-obvious shortcuts" layer plus navigation.
 
-**Pros:** Doesn't make CONTRIBUTING.md overwhelming. Agents get the context they need without forcing humans to wade through it.
+**Pros:** Single source of truth in CONTRIBUTING.md. No duplication or sync burden. Aligns with research on minimal, human-written agent context. Humans benefit from comprehensive CONTRIBUTING.md too.
 
-**Cons:** Maintenance burden of keeping two files in sync. Humans might not know CLAUDE.md exists or affects how agents behave. Risk of divergence between the two.
+**Cons:** CONTRIBUTING.md needs to be comprehensive enough for both audiences, which requires capturing institutional knowledge. CLAUDE.md must stay minimal and resist feature creep.
 
 ### Approach 3: Layered documentation with progressive disclosure
 
-Not all contributors need to know all rules. Structure guidance by contribution complexity:
+Not all contributors need to know all rules. Structure guidance by contribution complexity.
+
+This is a **conceptual model for organizing information**, not a prescription for specific file structures. Different repos might implement this through headings in CONTRIBUTING.md, separate docs/ files, or other approaches:
 
 | Tier | Contributor persona | What they need |
 |---|---|---|
@@ -163,17 +173,17 @@ AI agents acting on behalf of regular contributors should have access to all lay
 
 ### Approach 4: AI-assisted onboarding and feedback
 
-When a human contributor opens a PR, an AI agent (acting as a reviewer/helper) provides contextual guidance:
+When a contributor opens a PR, an AI agent (acting as a reviewer/helper) provides contextual guidance:
 
 - "This change touches API surface, which requires human CODEOWNERS approval — see [link] for details"
 - "This looks like a Tier 2 feature. You'll need to open an intent proposal at [repo] first."
 - "CI is failing because [specific test]. Here's how to run it locally: [command]"
 
-This serves human contributors who opened the PR themselves. It doesn't apply to PRs opened by AI agents on behalf of contributors — those agents should have already validated the requirements before opening the PR.
+This applies to **all PRs equally** — whether opened by a human contributor working alone, a human with AI assistance, or an AI agent acting autonomously. Treating all contributions the same way aligns with the zero trust principle: no agent should assume another agent has done its job correctly. This also provides better auditability (showing agent-to-agent handoffs) and simpler implementation (no need to detect or differentiate PR sources).
 
-**Pros:** Guidance appears exactly when needed for humans. Reduces documentation burden. Can help humans learn the implicit rules.
+**Pros:** Guidance appears exactly when needed. Reduces documentation burden. Can help humans learn the implicit rules. Provides audit trail for agent-to-agent interactions. Aligns with zero trust security model.
 
-**Cons:** Requires AI review agents to be deployed and reliable. May feel intrusive or patronizing if done poorly. Doesn't help contributors *before* they submit a PR. Creates a potential divide between "AI-helped" and "unassisted" contributors.
+**Cons:** Requires AI review agents to be deployed and reliable. May feel intrusive or patronizing if done poorly. Doesn't help contributors *before* they submit a PR.
 
 ### Approach 5: Public contribution checklist
 
@@ -209,6 +219,20 @@ This is both a practical accessibility concern and a philosophical one. Open sou
 - Cannot afford commercial AI services
 - Are learning and want to engage directly without AI mediation
 - Work in environments where AI tools are restricted
+
+### Equal treatment from a security perspective
+
+The "no agent required" principle also has security implications, aligned with the [zero trust model](security-threat-model.md):
+
+**The system shouldn't grant preferential treatment to an input simply because it appears to be from an agent that belongs to the system.** This means:
+
+- Human-generated and agent-generated contributions must be treated identically
+- No fast-tracking or skipping validation for agent-submitted PRs
+- No assumption that "internal" agents have done their validation correctly
+- All input treated as potentially adversarial, regardless of source
+- Same review criteria, same approval requirements, same security checks
+
+This prevents a compromised or drifted agent from exploiting trust relationships. A contribution's validity is determined by its content and compliance with requirements, not by who (or what) submitted it. This creates a more secure system while also ensuring fairness for human contributors.
 
 The goal: make implicit knowledge explicit (which helps AI agents) **without** making contribution so bureaucratic that it requires AI assistance to navigate.
 
