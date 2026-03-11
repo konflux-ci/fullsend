@@ -158,6 +158,19 @@ A human reviewer can say "I'm not sure about this, let me think" or "I need some
 - How does an agent express uncertainty? Confidence scores? Explicit "I don't know" signals?
 - Should there be a minimum number of agent reviewers that agree before auto-merge?
 
+### Dual-interpretation escalation
+
+When an agent escalates to a human, the quality of that escalation matters. A vague "I'm not confident" wastes the human's time. A more useful pattern: when the agent's uncertainty stems from a change being legitimately interpretable in two ways, it presents both interpretations as structured alternatives.
+
+For example, a review agent uncertain about tier classification could escalate with:
+
+- **Reading A:** "This is a bug fix (Tier 1) — the existing behavior doesn't match the documented intent, and the change is scoped to correcting that gap. Requires: linked issue."
+- **Reading B:** "This is a new feature (Tier 2) — the system never intended to do this, and the change adds new capability. Requires: authorized feature file in `approved/`."
+
+The human sees two coherent framings and picks the one that matches their understanding, rather than starting from scratch. This is faster and more structured than an open-ended "please review."
+
+This pattern is most valuable at escalation boundaries — where the system has already decided it can't resolve something autonomously. It doesn't replace confidence scores or explicit uncertainty signals; it complements them by making the *nature* of the uncertainty actionable. It applies wherever agents interact with humans: tier classification (see [intent-representation.md](intent-representation.md#the-tier-escalation-problem)), the exploration phase for proposed features (see [intent-representation.md](intent-representation.md#the-try-it-phase)), and deadlock resolution between review sub-agents (see [agent-architecture.md](agent-architecture.md#how-deadlocks-are-resolved)).
+
 ## Open questions
 
 - Can we quantify review quality? How do we know if an agent's review is as good as a human's?

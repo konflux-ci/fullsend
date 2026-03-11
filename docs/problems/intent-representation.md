@@ -68,6 +68,8 @@ For some types of change this phase *could* leverage a **vibe-to-spec** workflow
 
 Any draft PR created at this stage cannot merge — it's gated on the generated feature file being in approved/. Low cost, high information value. This decouples understanding a change from authorizing a change.
 
+The exploration phase can also benefit from [dual-interpretation escalation](code-review.md#dual-interpretation-escalation): when a proposed feature has two plausible implementation approaches, the agent can build both as draft PRs so stakeholders compare concrete alternatives rather than debating in the abstract.
+
 
 ### The "ship it" phase
 
@@ -240,6 +242,8 @@ Review agents must independently assess what tier a change *actually* represents
 - **Impact analysis** — does this change affect security, UX, or API surface? If so, it's at least Tier 2 regardless of the issue label.
 - **Intent verification** — does the linked issue actually describe what this PR does? And does the code do exactly what the intent file says, and nothing more? The vibe-to-spec workflow gives the agent a strict checklist. If someone tries to sneak a major new feature into a low-tier bug fix, the agent will automatically block it because the extra code won't match the generated spec.
 - **Pattern detection** — multiple "small" changes from the same source that collectively add up to a feature should trigger escalation.
+
+When tier classification is genuinely ambiguous, rather than making a weak call or defaulting to escalation without context, the review agent can use [dual-interpretation escalation](code-review.md#dual-interpretation-escalation) — presenting the human with both tier readings and the evidence for each, so the human makes a fast, informed decision rather than re-analyzing from scratch.
 
 This applies equally to review agents looking at code PRs *and* to agents evaluating intent changes in the intent repo itself. A low-tier intent statement that describes something high-impact should be flagged and escalated.
 
