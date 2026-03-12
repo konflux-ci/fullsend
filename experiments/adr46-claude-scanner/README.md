@@ -2,7 +2,7 @@
 
 A shell script that uses `claude` CLI to analyze Tekton tasks for ADR compliance. No hardcoded rules, no config files — all intelligence comes from claude's comprehension of the ADR text.
 
-See [the experiment log](../../docs/experiments/002-adr46-claude-scanner.md) for hypothesis, results, and analysis.
+See [RESULTS.md](RESULTS.md) for hypothesis, results, and analysis.
 
 ## Usage
 
@@ -30,4 +30,4 @@ Combines the ADR text and the target file into a prompt, passes it to `claude -p
 
 ## Key result
 
-Claude found all 7 violations, correctly exempted the trusted artifacts step, and surfaced insights our human analysis missed — including a hermetic build violation and a nuanced use-case vs. tool-oriented distinction. See the experiment log for the full comparison.
+Claude found all 7 violations, correctly exempted the trusted artifacts step, and surfaced insights our human analysis missed — including a hermetic build violation and a nuanced use-case vs. tool-oriented distinction. See [RESULTS.md](RESULTS.md) for the full comparison.

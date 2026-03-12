@@ -2,7 +2,7 @@
 
 A Python CLI tool that detects Tekton task steps drifting from [ADR-0046](https://github.com/konflux-ci/architecture/blob/main/ADR/0046-common-task-runner-image.md) (common task runner image) by comparing step images against a config-driven allowlist.
 
-See [the experiment log](../../docs/experiments/001-adr46-drift-scanner.md) for hypothesis, results, and analysis.
+See [RESULTS.md](RESULTS.md) for hypothesis, results, and analysis.
 
 ## Usage
 
