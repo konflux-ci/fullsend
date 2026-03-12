@@ -36,4 +36,5 @@ Analyze this task for compliance with the ADR. For each violation you find, desc
 
 If a step is legitimately exempt per the ADR, note that and explain why."
 
-claude -p --model claude-sonnet-4-20250514 "$prompt"
+# Unset CLAUDECODE to allow invocation from within a claude session
+env -u CLAUDECODE claude -p --model claude-sonnet-4-6 "$prompt"
