@@ -1,0 +1,217 @@
+# Testing the Agents
+
+We have CI for code, but no CI for prompts. If someone tweaks the Intent Alignment Agent's instructions, how do we prove it didn't forget how to detect Tier Escalation?
+
+## Why this is a distinct problem
+
+Testing application code is a solved problem with mature tooling: unit tests, integration tests, CI pipelines, coverage reports. But agent instructions — system prompts, CLAUDE.md files, review criteria, escalation rules — are a fundamentally different artifact. They're natural language, not code. Their behavior is probabilistic, not deterministic. And the consequences of a regression can be severe: an agent that silently stops catching tier escalation, or starts rubber-stamping security-sensitive changes, or loses its ability to detect prompt injection.
+
+Today, if someone modifies a review agent's instructions, the only verification is human review of the prose change. There is no automated way to confirm the agent still behaves correctly after the modification. This is the equivalent of shipping code changes with no test suite — something we would never accept for application code.
+
+## What makes agent testing hard
+
+### Non-determinism
+
+The same prompt with the same input can produce different outputs across runs. Traditional assertions ("output must equal X") don't work. Testing must be statistical — "the agent produces the correct classification in at least 95 of 100 runs" — which is slower, more expensive, and harder to interpret than binary pass/fail.
+
+### Behavioral surface area
+
+An agent's behavior is the product of its instructions, the model it runs on, the context it receives, and the specific input. A change to any of these can alter behavior. Testing agent instructions in isolation doesn't capture how they interact with real-world inputs. Testing them with the actual model is expensive and slow. Testing them with a different model may not be representative.
+
+### Absence detection
+
+The hardest bugs to catch are capabilities that silently disappear. If someone simplifies the Intent Alignment Agent's instructions and removes the paragraph about tier escalation detection, the agent won't error — it will simply stop checking for tier escalation. There's no compile error, no stack trace, no failing import. The capability quietly vanishes, and you only discover it when a tier-gaming attack succeeds.
+
+### Interaction effects
+
+Agents don't operate alone. The review sub-agents described in [code-review.md](code-review.md) compose their decisions. A change to one agent's instructions might not cause that agent to fail in isolation, but might break the overall review process — for example, if the Intent Alignment Agent starts flagging things that the Correctness Agent used to handle, creating a gap where neither catches certain issues.
+
+### Model updates
+
+Even without any instruction changes, a model update from the provider can change agent behavior. Instructions that worked well with one model version may produce different results with another. This means agent testing isn't just about catching instruction regressions — it's about ongoing behavioral monitoring.
+
+## What needs testing
+
+### Instruction changes (the primary concern)
+
+When someone modifies an agent's system prompt, CLAUDE.md, or configuration:
+
+- Does the agent still perform all its documented responsibilities?
+- Has any capability been lost?
+- Has any new unintended behavior been introduced?
+- Does the agent still correctly handle known edge cases?
+
+### Capability coverage
+
+For each agent role described in [agent-architecture.md](agent-architecture.md) and [code-review.md](code-review.md), there's an implicit set of capabilities. The Intent Alignment Agent should detect tier escalation. The Injection Defense Agent should catch known injection patterns. The Platform Security Agent should flag RBAC changes. These capabilities need explicit test coverage.
+
+### Cross-agent composition
+
+When multiple review sub-agents evaluate a PR together, does their combined judgment still produce correct outcomes? Changes to one agent's behavior can create gaps or conflicts in the overall review.
+
+### Adversarial robustness
+
+From the [security threat model](security-threat-model.md): agents must resist prompt injection. Testing must verify that instruction changes haven't weakened an agent's defenses against known attack patterns.
+
+## Approach 1: Golden-set evaluation
+
+Maintain a curated set of test cases — inputs with known-correct outputs — for each agent. Run the agent against the golden set whenever its instructions change.
+
+### Structure
+
+```
+agent-tests/
+  intent-alignment/
+    golden-set/
+      tier-escalation-detection.yaml
+      scope-mismatch.yaml
+      cross-repo-intent.yaml
+    ...
+  injection-defense/
+    golden-set/
+      comment-injection.yaml
+      description-injection.yaml
+      code-string-injection.yaml
+    ...
+```
+
+Each test case specifies an input (a synthetic PR, issue, or diff) and the expected agent behavior (approve, reject, escalate, flag specific concerns).
+
+### Trade-offs
+
+**Pros:**
+- Concrete, auditable, version-controlled
+- Directly tests for known capabilities — if tier escalation detection breaks, the golden-set test for it fails
+- Fast feedback loop compared to production monitoring
+- Can be run in CI on every instruction change
+
+**Cons:**
+- Only tests known scenarios — novel failure modes won't be caught
+- Maintaining the golden set is ongoing work; it can drift from reality
+- Non-determinism means tests need multiple runs and statistical thresholds, making CI slower and flakier
+- The golden set itself can contain biases or blind spots
+
+### The coverage question
+
+How do you know the golden set is sufficient? For application code, coverage tools measure which lines were exercised. There's no equivalent for "which capabilities of a natural-language instruction set were exercised." This is an open research problem.
+
+## Approach 2: Behavioral contract testing
+
+Define contracts for each agent — formal statements about what the agent must and must not do — and test against those contracts. This is more abstract than golden-set testing but potentially more robust.
+
+### Example contracts for the Intent Alignment Agent
+
+- MUST flag any PR where the linked issue describes a bug fix but the diff adds new API surface
+- MUST flag any PR that modifies files in more than 3 directories when the linked issue is labeled "bug"
+- MUST NOT approve a PR with no linked issue unless the change is classified as Tier 0
+- MUST escalate when the diff scope exceeds what the linked intent file authorizes
+
+### Trade-offs
+
+**Pros:**
+- Tests capabilities at a higher level than individual examples
+- Contracts serve as documentation of expected behavior
+- More resilient to minor behavioral variations (tests the "what" not the "how")
+
+**Cons:**
+- Contracts still need concrete test inputs to exercise them
+- Writing good contracts requires deep understanding of each agent's role
+- Contract verification itself may require an LLM (judging whether an agent's response satisfies a contract), introducing another layer of non-determinism
+
+## Approach 3: Canary deployments for instruction changes
+
+Don't try to test exhaustively before deployment. Instead, deploy instruction changes gradually and monitor for behavioral drift.
+
+### How it works
+
+1. Instruction change is proposed via PR
+2. The modified agent runs alongside the current agent on a sample of real reviews
+3. Outputs are compared — do they agree? Where do they diverge?
+4. If divergence is within acceptable bounds, the change is promoted
+5. If divergence exceeds thresholds, the change is blocked or escalated
+
+### Trade-offs
+
+**Pros:**
+- Tests against real-world inputs, not synthetic ones
+- Catches interaction effects and edge cases that golden sets miss
+- No need to maintain a separate test suite
+
+**Cons:**
+- Slow — requires a meaningful sample of real reviews before the change can be promoted
+- Expensive — running two agents in parallel doubles the cost during the canary period
+- Risky — if the canary agent has a critical regression, it's processing real PRs (even if its outputs aren't authoritative)
+- Doesn't work well for new agents with no production baseline to compare against
+
+## Approach 4: Mutation testing for instructions
+
+Analogous to mutation testing for code: systematically introduce small changes to agent instructions and verify that the test suite catches them.
+
+### How it works
+
+1. Take the current instruction set
+2. Generate mutations: remove a paragraph, weaken a requirement ("must" to "should"), delete a specific capability mention
+3. Run the test suite against each mutant
+4. If the test suite still passes with a mutant, there's a gap in test coverage
+
+### Trade-offs
+
+**Pros:**
+- Directly measures test suite quality — answers "would we catch it if this capability disappeared?"
+- Automated — mutations can be generated programmatically or by an LLM
+- Addresses the absence-detection problem head-on
+
+**Cons:**
+- Expensive — many mutations, each requiring multiple evaluation runs
+- Some mutations produce meaningfully equivalent instructions (rewording without changing behavior), creating false "test gaps"
+- Mutation generation for natural language is less well-defined than for code
+
+## Versioning agent instructions
+
+Regardless of the testing approach, agent instructions need version control and change tracking:
+
+- **Instructions live in git.** Every change is a commit with a diff, a reviewer, and a justification. This follows the design decision that the repo is the coordinator.
+- **CODEOWNERS protects instructions.** Per the [governance](governance.md) model, agent instructions are a guarded path. Changes require human approval.
+- **Instruction changes trigger CI.** Just as code changes trigger tests, instruction changes trigger the agent test suite (whichever approach is used).
+- **Version pinning.** When an agent is deployed, it runs a specific version of its instructions. Rolling back is a git revert.
+
+## CI pipeline for agent configurations
+
+A practical CI pipeline for agent instruction changes might look like:
+
+1. **Static analysis** — lint the instruction change for obvious issues (removed capability mentions, weakened requirements, structural problems)
+2. **Golden-set evaluation** — run the agent against the golden set with the new instructions; compare pass rates to the baseline
+3. **Behavioral contract verification** — check that all defined contracts still hold
+4. **Adversarial evaluation** — run known prompt injection attacks against the modified agent
+5. **Diff report** — produce a human-readable summary of behavioral changes for the reviewer
+
+Steps 2-4 are expensive (they invoke the LLM), so they may need dedicated pipeline infrastructure separate from normal build pipelines. Cost management is a real constraint — see [agent-infrastructure.md](agent-infrastructure.md).
+
+## Measuring agent capability drift
+
+Beyond testing individual instruction changes, there's a need for ongoing monitoring:
+
+- **Periodic re-evaluation** — run the golden set on a schedule, even without instruction changes, to catch drift from model updates
+- **Production outcome tracking** — when a human overrides an agent's decision, log it as a potential test case. If the agent approved something a human rejected, that's a signal.
+- **Capability dashboards** — for each agent, track which capabilities are covered by tests and what their recent pass rates look like. Similar in spirit to the coverage dashboard referenced in [repo-readiness.md](repo-readiness.md).
+
+## Relationship to other problem areas
+
+- **[Governance](governance.md)** — Who is authorized to change agent instructions? Testing is the verification layer, but governance determines who can make changes and who reviews them.
+- **[Security Threat Model](security-threat-model.md)** — A compromised or regressed agent is a security event. The canary/tripwire patterns mentioned there are directly related to golden-set testing.
+- **[Code Review](code-review.md)** — The review sub-agents are the primary agents that need testing. Their decomposition into specialized roles means each role needs its own test coverage.
+- **[Agent Architecture](agent-architecture.md)** — The architecture determines what agents exist and what they're responsible for, which determines what needs testing.
+- **[Repo Readiness](repo-readiness.md)** — Just as repos need test coverage before agents can be trusted with them, agent instructions need test coverage before instruction changes can be trusted.
+
+## Open questions
+
+- What's the right statistical threshold for non-deterministic tests? How many runs constitute a reliable signal, and what pass rate is acceptable?
+- Can we use one LLM to test another's behavior reliably, or does LLM-as-judge just move the trust problem?
+- How do we bootstrap the golden set? Do we start with synthetic examples, or do we capture real-world cases from early human-supervised agent operation?
+- Who maintains the test suite for each agent? Is it the agent's instruction author, a separate testing team, or the agent itself (self-testing)?
+- How do we handle model provider updates that change behavior without any instruction changes? Is periodic re-evaluation sufficient, or do we need real-time drift detection?
+- What's the cost budget for agent testing? Running hundreds of LLM evaluations per instruction change could be expensive — both in LLM API costs and in cluster resources, since these evaluations would run as Tekton tasks.
+- Should agent tests be public (in the repo) or private (to avoid teaching attackers what the agents check for)? There's a tension between transparency and security.
+- Can agents test other agents, or does that create circular trust dependencies? (Agent A tests Agent B, but who tests Agent A?)
+- How do we test cross-agent composition without combinatorial explosion of test scenarios?
+- Is there a meaningful equivalent of "code coverage" for natural-language instructions, or is that a false analogy?
