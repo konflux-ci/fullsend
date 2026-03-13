@@ -60,6 +60,35 @@ Before flipping a repo to full autonomy, run agents in "shadow mode":
 
 This builds trust incrementally and provides data on agent reliability.
 
+## Alternative: per-decision escalation dimensions
+
+The binary per-repo model is simple but coarse. An alternative (or supplement) is to evaluate each decision against a set of escalation dimensions at runtime. Instead of asking "is this repo autonomous?" the agent asks "is this particular action safe to proceed with?"
+
+Example dimensions:
+
+| Dimension | Low (agent proceeds) | High (escalate) |
+|---|---|---|
+| **Reversibility** | Undo in minutes, no data loss | Hours/days to roll back, or irreversible |
+| **Blast radius** | One component, one agent | Multiple services, teams, or agents |
+| **Visibility** | Internal only | Visible to users, customers, or third parties |
+
+The rule is simple: if any dimension is high, escalate. No special cases for "strategic" vs "operational" — the dimensions apply uniformly.
+
+### How this could supplement the binary model
+
+Per-decision evaluation doesn't have to replace the per-repo binary model. It could layer on top of it:
+
+- **Non-autonomous repos** stay non-autonomous — humans review everything regardless.
+- **Autonomous repos** use dimensional checks as a runtime safety net. An agent operating in an autonomous repo would still escalate if it recognizes that a change is irreversible, cross-cutting, or user-visible — even if the files involved aren't in CODEOWNERS.
+
+This addresses the gap where the binary model can miss risky changes that don't happen to touch a guarded path. CODEOWNERS catches known-sensitive files; dimensional checks catch emergent risk in the change itself.
+
+### Trade-offs
+
+- Requires agents to accurately self-assess dimensions in real time — a judgment call the binary model avoids entirely.
+- The dimensions listed above are examples, not necessarily exhaustive. Different organizations might weight or define them differently.
+- Could produce false escalations (agent is uncertain, so it escalates conservatively) or false confidence (agent misjudges blast radius). Shadow mode data would help calibrate.
+
 ## Open questions
 
 - Who decides when a repo is ready for autonomy? (See [governance.md](governance.md))
