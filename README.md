@@ -26,10 +26,10 @@ This is not a product spec. It's an evolving exploration of a hard problem space
   - [Codebase Context](docs/problems/codebase-context.md) — How agents acquire codebase understanding and how to structure org-level context
   - [Human Factors](docs/problems/human-factors.md) — Domain ownership, role shift, review fatigue, and contributor motivation
 - **[docs/landscape.md](docs/landscape.md)** — Survey of existing AI code review tools and how they relate to our goals (time-sensitive — check the date)
-- **[docs/experiments/](docs/experiments/)** — Logs and results from trying things in practice
+- **[experiments/](experiments/)** — Logs and results from trying things in practice
 
 ## How to contribute
 
 Pick a problem area that interests you. Read the existing document. Add your perspective, propose solutions, poke holes in existing proposals. Open a PR.
 
-If you want to run an experiment — try an agent workflow in a repo, test a security guardrail, prototype an intent system — document what you did and what you learned in `docs/experiments/`.
+If you want to run an experiment — try an agent workflow in a repo, test a security guardrail, prototype an intent system — document what you did and what you learned in `experiments/`.
