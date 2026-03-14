@@ -18,12 +18,17 @@ DEFENSES = {
     "combined": run_combined,
 }
 
-RUNS_PER_CELL = 3
+RUNS_PER_CELL = 10
 
 
-def majority_outcome(results: list[DefenseResult]) -> str:
-    detected_count = sum(1 for r in results if r.detected)
-    return "detected" if detected_count > len(results) // 2 else "clean"
+def summarize_cell(results: list[DefenseResult]) -> str:
+    detected = sum(1 for r in results if r.detected)
+    clean = len(results) - detected
+    if detected == len(results):
+        return f"detected ({detected}/{len(results)})"
+    if clean == len(results):
+        return f"clean ({clean}/{len(results)})"
+    return f"**{clean}/{len(results)} clean**"
 
 
 def run_matrix(attacks: list[Attack]) -> dict[tuple[str, str], list[DefenseResult]]:
@@ -52,7 +57,7 @@ def format_results_table(results: dict[tuple[str, str], list[DefenseResult]]) ->
         for defense_name in defense_names:
             key = (attack_name, defense_name)
             if key in results:
-                cells.append(majority_outcome(results[key]))
+                cells.append(summarize_cell(results[key]))
             else:
                 cells.append("-")
         rows.append(f"| {attack_name} | " + " | ".join(cells) + " |")

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from defenses.interface import DefenseResult, Attack
-from runner import run_matrix, format_results_table, majority_outcome
+from runner import format_results_table, summarize_cell
 
 
 def test_format_results_table():
@@ -32,17 +32,28 @@ def test_format_results_table():
     assert "clean" in lines[2]
 
 
-def test_majority_vote_logic():
-    results_clean = [
+def test_summarize_cell_all_clean():
+    results = [
         DefenseResult(detected=False, explanation=""),
         DefenseResult(detected=False, explanation=""),
-        DefenseResult(detected=True, explanation=""),
+        DefenseResult(detected=False, explanation=""),
     ]
-    assert majority_outcome(results_clean) == "clean"
+    assert summarize_cell(results) == "clean (3/3)"
 
-    results_detected = [
+
+def test_summarize_cell_all_detected():
+    results = [
         DefenseResult(detected=True, explanation=""),
+        DefenseResult(detected=True, explanation=""),
+        DefenseResult(detected=True, explanation=""),
+    ]
+    assert summarize_cell(results) == "detected (3/3)"
+
+
+def test_summarize_cell_mixed():
+    results = [
+        DefenseResult(detected=False, explanation=""),
         DefenseResult(detected=True, explanation=""),
         DefenseResult(detected=False, explanation=""),
     ]
-    assert majority_outcome(results_detected) == "detected"
+    assert summarize_cell(results) == "**2/3 clean**"
