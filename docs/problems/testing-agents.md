@@ -200,6 +200,14 @@ The main gap: deepeval's built-in metrics are oriented toward conversational AI 
 
 The main gap: lightspeed-evaluation is oriented toward conversational assistants rather than code review agents. Adapting it to evaluate PR review decisions would require significant extension. Its relevance is more as a reference for evaluation methodology than a drop-in tool.
 
+### Input expansion from seed sets
+
+A shared capability across these tools — and arguably their most practical one for bootstrapping agent testing — is automated input mutation. Given a small set of (input, expected output) pairs, the tools can generate dozens or hundreds of variations: rephrased inputs, edge-case perturbations, adversarial rewrites. The agent is scored against the full expanded corpus, not just the originals.
+
+This directly addresses the golden-set bootstrapping problem. Instead of hand-crafting hundreds of test cases, a team writes 10–20 seed cases per capability and lets the framework expand them. The expansion can be deterministic (template-based substitution) or LLM-generated (semantic paraphrasing, adversarial mutation). promptfoo's red-teaming mode and deepeval's synthetic data generation both support this pattern.
+
+The CI integration is natural: establish a minimum passing score (e.g., "the agent must score ≥ 90% on the expanded tier-escalation corpus") and gate instruction changes on meeting that threshold. This is more robust than binary pass/fail on a handful of golden cases — a score-based gate absorbs non-determinism by treating occasional failures as acceptable within a statistical envelope, while still catching systematic regressions that push the score below the threshold.
+
 ### What the tools don't cover
 
 All three frameworks operate at the single-agent level — they evaluate one prompt against one output. The harder problems identified in this document remain open:
@@ -225,7 +233,7 @@ Regardless of the testing approach, agent instructions need version control and 
 A practical CI pipeline for agent instruction changes might look like:
 
 1. **Static analysis** — lint the instruction change for obvious issues (removed capability mentions, weakened requirements, structural problems)
-2. **Golden-set evaluation** — run the agent against the golden set with the new instructions; compare pass rates to the baseline
+2. **Golden-set evaluation** — run the agent against the golden set (expanded from seed cases) with the new instructions; gate on a minimum score threshold rather than binary pass/fail
 3. **Behavioral contract verification** — check that all defined contracts still hold
 4. **Adversarial evaluation** — run known prompt injection attacks against the modified agent
 5. **Diff report** — produce a human-readable summary of behavioral changes for the reviewer
