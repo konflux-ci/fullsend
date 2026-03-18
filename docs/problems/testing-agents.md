@@ -1,6 +1,6 @@
 # Testing the Agents
 
-We have CI for code, but no CI for prompts. If someone tweaks the Intent Alignment Agent's instructions, how do we prove it didn't forget how to detect Tier Escalation?
+We have CI for code, but no CI for prompts. If someone tweaks the intent alignment agent's instructions, how do we prove it didn't forget how to detect tier escalation?
 
 ## Why this is a distinct problem
 
@@ -20,11 +20,11 @@ An agent's behavior is the product of its instructions, the model it runs on, th
 
 ### Absence detection
 
-The hardest bugs to catch are capabilities that silently disappear. If someone simplifies the Intent Alignment Agent's instructions and removes the paragraph about tier escalation detection, the agent won't error — it will simply stop checking for tier escalation. There's no compile error, no stack trace, no failing import. The capability quietly vanishes, and you only discover it when a tier-gaming attack succeeds.
+The hardest bugs to catch are capabilities that silently disappear. If someone simplifies the intent alignment agent's instructions and removes the paragraph about tier escalation detection, the agent won't error — it will simply stop checking for tier escalation. There's no compile error, no stack trace, no failing import. The capability quietly vanishes, and you only discover it when a tier-gaming attack succeeds.
 
 ### Interaction effects
 
-Agents don't operate alone. The review sub-agents described in [code-review.md](code-review.md) compose their decisions. A change to one agent's instructions might not cause that agent to fail in isolation, but might break the overall review process — for example, if the Intent Alignment Agent starts flagging things that the Correctness Agent used to handle, creating a gap where neither catches certain issues.
+Agents don't operate alone. The review sub-agents described in [code-review.md](code-review.md) compose their decisions. A change to one agent's instructions might not cause that agent to fail in isolation, but might break the overall review process — for example, if the intent alignment agent starts flagging things that the correctness agent used to handle, creating a gap where neither catches certain issues.
 
 ### Model updates
 
@@ -43,7 +43,7 @@ When someone modifies an agent's system prompt, CLAUDE.md, or configuration:
 
 ### Capability coverage
 
-For each agent role described in [agent-architecture.md](agent-architecture.md) and [code-review.md](code-review.md), there's an implicit set of capabilities. The Intent Alignment Agent should detect tier escalation. The Injection Defense Agent should catch known injection patterns. The Platform Security Agent should flag RBAC changes. These capabilities need explicit test coverage.
+For each agent role described in [agent-architecture.md](agent-architecture.md) and [code-review.md](code-review.md), there's an implicit set of capabilities. The intent alignment agent should detect tier escalation. The injection defense agent should catch known injection patterns. The platform security agent should flag RBAC changes. These capabilities need explicit test coverage.
 
 ### Cross-agent composition
 
@@ -99,7 +99,7 @@ How do you know the golden set is sufficient? For application code, coverage too
 
 Define contracts for each agent — formal statements about what the agent must and must not do — and test against those contracts. This is more abstract than golden-set testing but potentially more robust.
 
-### Example contracts for the Intent Alignment Agent
+### Example contracts for the intent alignment agent
 
 - MUST flag any PR where the linked issue describes a bug fix but the diff adds new API surface
 - MUST flag any PR that modifies files in more than 3 directories when the linked issue is labeled "bug"
@@ -179,7 +179,7 @@ The approaches above aren't purely theoretical — an emerging class of LLM eval
 - Has a red-teaming mode that generates adversarial inputs, relevant to the adversarial evaluation step in the CI pipeline
 - Designed for CI integration, producing machine-readable output
 
-The main gap: promptfoo evaluates single prompts against single outputs. It doesn't natively model multi-agent composition or cross-agent interaction effects. Testing whether the Intent Alignment Agent and Correctness Agent together produce correct outcomes would require custom harness code on top.
+The main gap: promptfoo evaluates single prompts against single outputs. It doesn't natively model multi-agent composition or cross-agent interaction effects. Testing whether the intent alignment agent and correctness agent together produce correct outcomes would require custom harness code on top.
 
 ### deepeval
 

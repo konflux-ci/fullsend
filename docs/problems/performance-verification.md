@@ -144,7 +144,7 @@ Based on observed behavior across agentic coding tools, agents commonly produce 
 
 These patterns are detectable by static analysis if codified into rules. The challenge is maintaining the rule set as new anti-patterns emerge.
 
-## Interaction with other problem areas
+## Relationship to other problem areas
 
 - **[Code Review](code-review.md):** A performance-focused review sub-agent could be added to the review decomposition. It would evaluate diffs for performance implications using codebase context (is this a controller reconcile loop? does this code path make API server calls?). This is complementary to automated detection — the review agent catches what the linters miss, and the linters catch what the review agent misses.
 - **[Repo Readiness](repo-readiness.md):** Benchmark coverage and performance test infrastructure could be added to the readiness criteria. A repo without performance baselines is harder to protect from agent-introduced regressions. For controller repos, this might mean envtest-based benchmarks of reconciliation paths.

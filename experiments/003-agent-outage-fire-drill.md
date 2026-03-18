@@ -9,7 +9,7 @@ After several months of agent autonomy, engineering teams will have difficulty o
 
 1. Tasks that took a predictable amount of time pre-autonomy will take significantly longer post-autonomy, even though the humans involved are the same people who built the systems.
 2. Domain experts will need a reorientation period before they can implement effectively in subsystems they nominally own.
-3. The team may not recognise the extent of their dependency until the agents are removed.
+3. The team may not recognize the extent of their dependency until the agents are removed.
 
 This tests the core claim from [Bainbridge (1983)](../problems/human-factors.md#the-ironies-of-automation): automation removes the practice that keeps operators skilled enough to intervene when automation fails. If the claim holds for software development, an agent outage — even a planned one — should produce measurable degradation in human performance.
 
@@ -17,7 +17,7 @@ This tests the core claim from [Bainbridge (1983)](../problems/human-factors.md#
 
 This is chaos engineering for human capability. Netflix's Chaos Monkey kills production servers to prove the infrastructure can survive failures. This experiment kills the agent to prove the *people* can survive without it. The same logic applies: if you haven't tested the failure mode, you don't know whether you can handle it.
 
-Agent outages are not hypothetical. Infrastructure fails, API keys expire, providers have incidents, budgets get cut. If the team cannot function during a two-week outage, the organisation has an undisclosed single point of failure in its engineering capability. This experiment surfaces that risk while there's still time to address it.
+Agent outages are not hypothetical. Infrastructure fails, API keys expire, providers have incidents, budgets get cut. If the team cannot function during a two-week outage, the organization has an undisclosed single point of failure in its engineering capability. This experiment surfaces that risk while there's still time to address it.
 
 ## Design
 
@@ -56,7 +56,7 @@ Agent outages are not hypothetical. Infrastructure fails, API keys expire, provi
 ### Controls and caveats
 
 - **The pre-autonomy baseline is the key comparison**, not agent-assisted performance. The question is "have humans degraded?" not "are agents faster?" We already know agents are faster.
-- **Learning effects during the drill.** Performance may improve over the two weeks as people re-familiarise themselves. The trajectory matters — a steep initial drop that recovers suggests temporary rust, while a sustained deficit suggests deeper atrophy.
+- **Learning effects during the drill.** Performance may improve over the two weeks as people re-familiarize themselves. The trajectory matters — a steep initial drop that recovers suggests temporary rust, while a sustained deficit suggests deeper atrophy.
 - **Hawthorne effect.** People may work harder during the drill because they know they're being observed. This makes the experiment conservative — if performance degrades even with heightened effort, the real-world situation is likely worse.
 
 ## Expected outcomes
@@ -67,7 +67,7 @@ Agent outages are not hypothetical. Infrastructure fails, API keys expire, provi
 - Domain experts need meaningful reorientation time in subsystems they own
 - The confidence self-assessment reveals a gap — people predicted they'd be fine but weren't
 - This is strong evidence for the [third category of participation](../problems/human-factors.md#is-the-two-point-model-enough): humans need ongoing hands-on involvement to maintain capability, and the current autonomy model doesn't provide it
-- It also reframes agent autonomy as an organisational risk: a capability that degrades the team's ability to function without it
+- It also reframes agent autonomy as an organizational risk: a capability that degrades the team's ability to function without it
 
 **If the hypothesis doesn't hold:**
 

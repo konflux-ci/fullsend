@@ -4,7 +4,7 @@ How do we make Konflux contribution rules clear to both human contributors and A
 
 ## Why this matters
 
-Konflux aspires to be an "upstream" open source project capable of accepting contributions from the general public. Contributors range from individual hobbyists to engineers at large corporations, with varying levels of familiarity with Konflux's architecture and conventions.
+Konflux aspires to be an "upstream" open-source project capable of accepting contributions from the general public. Contributors range from individual hobbyists to engineers at large corporations, with varying levels of familiarity with Konflux's architecture and conventions.
 
 If agents are actively developing Konflux, the contribution process must work for:
 
@@ -98,7 +98,7 @@ Human and agents will need to understand how to contribute automated tests along
 
 - What tests need to pass before a PR is ready for review?
 - What are the conventions for contributing new tests?
-- What distinguishes unit, integration, and end to end testing? Which types of testing are
+- What distinguishes unit, integration, and end-to-end testing? Which types of testing are
   emphasized?
 - Which tests can be run locally vs. those that require a dedicated environment?
 - Do code coverage metrics matter, and how are they computed?
@@ -115,9 +115,9 @@ For exploratory contributions ("I think this might fix the issue but I'm not sur
 - Do we expect agents to generate exploratory/draft changes?
 - Draft status is about the state of the work, not about who submitted it — the same exploratory/iterative workflow applies whether the PR comes from a human experimenting or an agent exploring alternatives
 
-## Key Principles
+## Key principles
 
-### No Agent Assistance Required
+### No agent assistance required
 
 A critical constraint: **using AI must not be required to contribute to Konflux.**
 
@@ -137,7 +137,7 @@ This is both a practical accessibility concern and a philosophical one. Open sou
 
 Beyond accessibility, there's a deeper question about whether contribution remains meaningful when agents handle routine work. See [human-factors.md](human-factors.md) for exploration of contributor motivation, domain ownership, and the shift from hands-on development to supervising agent output.
 
-### Human and Agent Equality
+### Human and agent equality
 
 The "no agent required" principle also has security implications, aligned with the [zero trust model](security-threat-model.md):
 
@@ -179,7 +179,7 @@ The goal: make implicit knowledge explicit (which helps AI agents) **without** m
 - Should we explicitly signal which documentation is "need to know" for humans vs. "supplementary context" primarily for AI assistants?
 - How do we capture and document the "why" behind decisions when that context is currently tribal knowledge?
 
-## Potential Solutions
+## Potential solutions
 
 Below is a suggested set of solutions that could be candidates for experiments.
 

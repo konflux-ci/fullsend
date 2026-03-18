@@ -1,5 +1,7 @@
 # Production Feedback
 
+How should production signals feed back into the agents developing and maintaining the system?
+
 ## Problem
 
 Any project adopting an agentic software factory model faces a general question:
@@ -123,7 +125,7 @@ Detection requires two complementary stopping conditions. First, iteration count
 
 Prevention: the triage agent should not generate an implementation-ready issue without sufficient corroborating evidence — a correlated deploy event, minimum cross-tenant breadth, signal-to-noise ratio above threshold, and failure log content consistent with a platform origin. Below that threshold, the output is a flagged observation for human triage, not an actionable issue.
 
-## Relationship to other problems
+## Relationship to other problem areas
 
 This problem does not exist in isolation. The closed-loop model described above intersects with several other open problems in the repo.
 
