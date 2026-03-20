@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.6.0
+
+      - name: Install pre-commit
+        run: uv pip install --system pre-commit
+
+      - name: Run pre-commit (skip ty)
+        run: SKIP=ty pre-commit run --all-files
+
+      - name: Run ty check
+        run: uvx ty check experiments/
