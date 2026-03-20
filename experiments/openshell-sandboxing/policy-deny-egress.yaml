@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# OpenShell policy: deny all egress.
+# This policy provides no network_policies block, so the default-deny
+# behavior blocks all outbound connections.
+# Used as the "negative test" in the sandboxing experiment.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# No network_policies section -- all egress is denied by default.
