@@ -191,6 +191,18 @@ The main gap: promptfoo evaluates single prompts against single outputs. It does
 
 The main gap: deepeval's built-in metrics are oriented toward conversational AI (relevancy, faithfulness to a source document). Evaluating whether a review agent correctly detected tier escalation requires custom metrics — the framework supports this, but the useful metrics would need to be written.
 
+### Langfuse
+
+[Langfuse](https://langfuse.com/) is an open-source LLM engineering platform that spans observability and evaluation. While its primary strength is runtime tracing (see [agent-observability.md](agent-observability.md)), its evaluation features are relevant to agent testing:
+
+- **Datasets and experiments** — Langfuse supports curated datasets (input/expected-output pairs) and can run experiments against them with comparison reports. This maps to the golden-set evaluation pattern in Approach 1 — the dataset is the golden set, the experiment is the CI evaluation run.
+- **LLM-as-a-judge evaluators** — fully managed evaluators that score agent outputs on configurable dimensions. These can run against production traces (monitoring) or dataset experiments (testing). Supports step-wise evaluation within a trace, which could evaluate individual sub-agent decisions rather than just the final output.
+- **Human annotation queues** — structured workflows for human labeling of agent outputs, which can bootstrap golden sets from real-world cases rather than synthetic examples alone.
+- **Score tracking over time** — evaluation scores attach to traces and can be plotted over time, directly supporting the "capability dashboards" and "periodic re-evaluation" patterns described in the drift detection section below.
+- **Prompt version comparison** — when prompt versions are managed through Langfuse, experiments can compare metrics (latency, cost, eval scores) across versions, answering "did this instruction change make things worse?"
+
+The main gap: Langfuse's evaluation is tightly coupled to its tracing infrastructure — you evaluate traces, not standalone prompt/response pairs in isolation. This is a strength for production monitoring but means that pure offline evaluation (run this prompt against this model 100 times and score the results) requires either generating traces first or using the API/SDK to create synthetic trace data. For CI-gated evaluation of instruction changes (where you want fast, isolated runs), promptfoo or deepeval may be more direct. The opportunity is using Langfuse for runtime evaluation and drift detection while using a lighter-weight tool for pre-merge CI checks.
+
 ### lightspeed-evaluation
 
 [lightspeed-evaluation](https://github.com/instructlab/lightspeed-evaluation) is an evaluation framework from the InstructLab project, focused on validating AI assistant behavior against expected task completions. It's worth noting because of its proximity to the Red Hat ecosystem that konflux-ci operates in:

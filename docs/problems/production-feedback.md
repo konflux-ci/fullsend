@@ -133,6 +133,8 @@ There is also a governance question: if production feedback can autonomously cre
 
 **Stopping conditions and loop termination**: The false-positive remediation loop risk and the iteration/cost budget questions below relate to how the broader agentic loop handles convergence failure. These stopping conditions need to be represented somewhere in the agent coordination model — not just in this problem's scope.
 
+**Agent observability**: The closed-loop model depends on being able to trace agent actions end-to-end — from signal detection through triage, implementation, review, merge, and post-deploy validation. Agent observability (see [agent-observability.md](agent-observability.md)) provides the tracing infrastructure to correlate platform signals with agent actions. When post-merge validation shows a fix didn't work, the investigation needs the full trace of the triage, implementation, and review that produced it. Cost tracking in the observability layer also feeds directly into the "cost budget" stopping condition for false-positive remediation loops.
+
 ## Open questions
 
 - What platform-level metrics does Konflux already expose for agent consumption? How granular is the failure categorization in the existing Prometheus stack?

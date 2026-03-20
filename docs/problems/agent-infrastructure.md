@@ -11,7 +11,7 @@ Agents need:
 - **Compute** — to run models, run tools (clones, linters, tests), and process context
 - **Isolation** — so one compromised or buggy agent doesn't affect others; see [security-threat-model.md](security-threat-model.md) (agent-to-agent injection, lateral movement)
 - **Resources** — access to repos, CI artifacts, intent sources, and possibly internal APIs in a controlled way
-- **Observability** — logs, traces, and auditability so we can attribute actions and debug failures
+- **Observability** — logs, traces, and auditability so we can attribute actions and debug failures (see [agent-observability.md](agent-observability.md) for a full treatment)
 
 The choice of platform affects cost, lock-in, compliance, integration with existing konflux-ci systems, and how we scale (per-repo vs shared agents — see agent-architecture open questions).
 
@@ -71,6 +71,7 @@ Design and operate dedicated agent infrastructure: runner pool, sandboxing, tool
 - **Security threat model** — Isolation and “separate execution environments” are implemented by this layer. Supply chain (what base images and dependencies the runtime uses) also lives here.
 - **Governance** — Policy may be applied at runtime by agents reading from a policy repo; infrastructure determines where that runtime runs and how it accesses policy.
 - **Repo readiness** — Repos need reliable CI and signals; agent infrastructure may consume or depend on the same CI (e.g. for “run tests” or “run linters”) and should not conflict with it.
+- **Agent observability** — The infrastructure layer must support observability instrumentation. Where agents run determines what tracing is possible, what storage is available for traces, and whether a platform like Langfuse can be co-located. See [agent-observability.md](agent-observability.md).
 
 ## Open questions
 
