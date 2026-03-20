@@ -222,7 +222,7 @@ The comprehensive content lives in CONTRIBUTING.md, where both humans and agents
 
 **Pros:** Root source of truth in CONTRIBUTING.md. No duplication or sync burden. Aligns with research on minimal, human-written agent context. Humans benefit from comprehensive CONTRIBUTING.md too.
 
-**Cons:** CONTRIBUTING.md needs to be comprehensive enough for both audiences, which requires capturing institutional knowledge. CLAUDE.md must stay minimal and resist feature creep. 
+**Cons:** CONTRIBUTING.md needs to be comprehensive enough for both audiences, which requires capturing institutional knowledge. CLAUDE.md must stay minimal and resist feature creep.
 
 ### Layered documentation with progressive disclosure
 
