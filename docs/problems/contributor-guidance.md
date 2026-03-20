@@ -1,12 +1,12 @@
 # Contributor Guidance
 
-How do we make Konflux contribution rules clear to both human contributors and AI agents — without requiring contributors to use AI themselves?
+How do we make contribution rules clear to both human contributors and AI agents — without requiring contributors to use AI themselves?
 
 ## Why this matters
 
-Konflux aspires to be an "upstream" open source project capable of accepting contributions from the general public. Contributors range from individual hobbyists to engineers at large corporations, with varying levels of familiarity with Konflux's architecture and conventions.
+Open source projects aspire to accept contributions from the general public. Contributors range from individual hobbyists to engineers at large corporations, with varying levels of familiarity with the project's architecture and conventions.
 
-If agents are actively developing Konflux, the contribution process must work for:
+If agents are actively developing the project, the contribution process must work for:
 
 - **Human-only contributors** — someone opening their first PR with no AI tooling
 - **Human-assisted contributors** — someone using AI to help write code but driving the process themselves
@@ -82,11 +82,11 @@ What approvals does my change need? Tier 0 (standing rules) needs none. Tier 1 (
 
 ### Repository-specific conventions
 
-Each Konflux repo may have its own CODEOWNERS boundaries, architectural invariants, and local conventions. How does a contributor discover these?
+Each repo may have its own CODEOWNERS boundaries, architectural invariants, and local conventions. How does a contributor discover these?
 
 - **CONTRIBUTING.md** — Human-oriented guidelines, often concise
 - **CLAUDE.md** (and others) — Instructions targeted to an AI agent implementation
-- **Architecture docs** in the konflux-ci/architecture repo — Cross-repo invariants and design decisions
+- **Architecture docs** in the organization's architecture repo — Cross-repo invariants and design decisions
 - **CODEOWNERS** — Shows *who* reviews *what*, but not *why* those paths are guarded (the "why" should be documented elsewhere)
 - **Git history and merged PRs** — Patterns and conventions shown through example
 
@@ -119,7 +119,7 @@ For exploratory contributions ("I think this might fix the issue but I'm not sur
 
 ### No Agent Assistance Required
 
-A critical constraint: **using AI must not be required to contribute to Konflux.**
+A critical constraint: **using AI must not be required to contribute to the project.**
 
 This means:
 
@@ -187,10 +187,12 @@ Below is a suggested set of solutions that could be candidates for experiments.
 
 Write down everything that's currently communicated through word of mouth, mentorship, or institutional memory:
 
-- **Why we prefer certain patterns** — "We use controller-runtime's predicate functions rather than manual filtering because we had memory leaks with the manual approach in 2024"
-- **Historical context for decisions** — "The CRD schema uses webhooks for validation rather than CEL because CEL wasn't mature enough when we designed this in 2023"
+- **Why we prefer certain patterns** — "We use X rather than Y because we had problems with Y in the past"
+- **Historical context for decisions** — "The schema uses approach A rather than B because B wasn't mature enough when we designed this"
 - **Common mistakes and how to avoid them** — "New contributors often forget to update the mock when changing an interface. Run `make generate` to catch this."
-- **Unwritten conventions** — "We prefer table-driven tests. See `pkg/controller/component_test.go` for the pattern."
+- **Unwritten conventions** — "We prefer table-driven tests. See `path/to/example_test.go` for the pattern."
+
+See [applied docs](applied/) for organization-specific examples of implicit knowledge that should be made explicit.
 
 This isn't a separate CLAUDE.md for agents vs CONTRIBUTING.md for humans. It's making the existing CONTRIBUTING.md and architecture docs more complete and explicit, so both humans and agents can learn from them.
 
@@ -211,12 +213,14 @@ Example minimal CLAUDE.md:
 ```
 See CONTRIBUTING.md for full contribution guidelines. Key non-obvious points:
 
-- CRD schema changes: see CONTRIBUTING.md#api-changes. Always check architecture repo.
-- We had production incidents from unvalidated enum fields in Q3 2024 - all new fields need validation.
-- Cross-repo impact: if changing Snapshot CRD, integration-service likely needs updates.
+- API changes: see CONTRIBUTING.md#api-changes. Always check architecture repo.
+- We had production incidents from unvalidated fields in Q3 2024 - all new fields need validation.
+- Cross-repo impact: if changing shared schemas, downstream consumers likely need updates.
 
 See BOOKMARKS.md for architectural context and external standards.
 ```
+
+See [applied docs](applied/) for organization-specific CLAUDE.md examples.
 
 The comprehensive content lives in CONTRIBUTING.md, where both humans and agents can access it. CLAUDE.md is just the "non-obvious shortcuts" layer plus navigation.
 

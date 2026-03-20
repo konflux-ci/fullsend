@@ -15,7 +15,7 @@ The right instinct in this phase is "what are we missing?" not "how do we solve 
 With the problem space in mind, we need to solve _certain_ problems first that can give us a framework on which to explore solutions to the remaining problems.
 
 * [agent-infrastructure](problems/agent-infrastructure.md) and [agent-architecture](problems/agent-architecture.md) stand out as foundational areas.
-* [testing-agents](https://github.com/konflux-ci/fullsend/pull/14) is important to build a basis for continued expansion of the system.
+* [testing-agents](problems/testing-agents.md) is important to build a basis for continued expansion of the system.
 * [intent-representation](problems/intent-representation.md) and [architectural-invariants](problems/architectural-invariants.md) need to be solved next.
 
 With provisional solutions to those problems in place, you should begin to be able to see what the whole system could look like.
@@ -36,11 +36,11 @@ Not every solution can be experimentally validated — some are organizational o
 * Closely related is the [autonomy-spectrum](problems/autonomy-spectrum.md) and escalation handling.
 * We need to be thinking seriously about [human-factors](problems/human-factors.md) at this stage.
 
-## Phase 4: Domain Specificity
+## Phase 4: Domain specificity
 
-With a foundation and some higher level capabilities in place, we're going to need to tune the system to Konflux's specific needs.
+With a foundation and some higher level capabilities in place, the system will need to be tuned to each downstream consumer's specific needs. This is where the [applied docs](problems/applied/) become central.
 
-We'll need agent skills that know how to debug konflux-ci e2e test failures and agent skills that know how to look for remote code execution problems in hermeto package managers.
+Each organization will need agent skills specific to their technology stack, their architecture, and their failure modes. The general problem documents provide the framework; the applied docs capture what's unique to each consumer.
 
 * [repo-readiness](problems/repo-readiness.md), [agent-compatible-code](problems/agent-compatible-code.md), and [codebase-context](problems/codebase-context.md) will be ongoing areas of work here
 
@@ -50,6 +50,6 @@ The path from validated solutions to adoption depends on how we resolve the [gov
 
 Until governance is resolved, the prior phases can proceed independently — we can explore problems and test solutions without yet deciding how decisions get made. But convergence requires it.
 
-At this stage, we should also be looking at choices made in the prior changes and consolidating any experiments that may have grown from PoCs into a de facto architecture.
+At this stage, we should also be looking at choices made in the prior phases and consolidating any experiments that may have grown from PoCs into a de facto architecture.
 
 What phase 5 looks like is deliberately left open.

@@ -4,30 +4,28 @@ Agents are notorious for writing code that passes unit tests but causes performa
 
 ## Why this is an agent-specific problem
 
-Human developers build intuitions about performance over time. A senior engineer working on Konflux knows that adding a Kubernetes API LIST call inside a reconcile loop is dangerous. They recognize that controller reconciliation needs to complete quickly or the work queue backs up. They've debugged the controller that leaked goroutines and they don't want to repeat the experience.
+Human developers build intuitions about performance over time. A senior engineer knows that adding a Kubernetes API LIST call inside a reconcile loop is dangerous. They recognize that controller reconciliation needs to complete quickly or the work queue backs up. They've debugged the controller that leaked goroutines and they don't want to repeat the experience.
 
 Agents have none of this. They optimize for the objective they're given, and that objective is almost always functional correctness: make the tests pass, satisfy the spec, match the types. Performance is a cross-cutting concern that rarely appears in task descriptions and is almost never verified by unit tests.
 
 This creates a specific failure mode: agent-generated code that is correct, well-tested, passes all CI checks, gets merged — and then degrades the system under real-world load. The code review agents described in [code-review.md](code-review.md) may catch obvious cases, but performance problems are often subtle and context-dependent. They need dedicated detection mechanisms.
 
-## Why Konflux makes this especially hard
+## Platform-specific challenges
 
-Konflux is a Kubernetes-native CI/CD platform. Its components are primarily controllers and operators that reconcile custom resources, coordinate Tekton PipelineRuns across tenant namespaces, and interact heavily with the Kubernetes API server. This architecture creates specific challenges for performance verification that go beyond what a typical web application faces:
+Different technology stacks create different performance verification challenges. Kubernetes-native platforms, for example, face challenges that go beyond what a typical web application faces — see [applied docs](applied/) for organization-specific details. Common platform-specific challenges include:
 
-- **The "database" is the Kubernetes API server.** There are no SQL queries to analyze. Performance problems manifest as excessive LIST/WATCH calls to the API server, unbounded label selector queries, or controllers that re-list resources they should be watching. Traditional N+1 query detection tooling doesn't apply.
-- **Controller logic needs a cluster to test.** Most code can't be meaningfully benchmarked with `testing.B` alone — it's reconciliation logic that needs a real or simulated Kubernetes environment (envtest, a real cluster). Setting up realistic performance tests requires significant infrastructure.
-- **Builds and tests are Tekton PipelineRuns.** Pipeline execution time and resource consumption are core performance concerns. A task change that adds 5 minutes to every build pipeline affects every tenant. But pipeline performance depends on cluster scheduling, image pull times, and resource contention — factors that vary between environments.
-- **Integration tests are Tekton pipelines too.** They receive a `SNAPSHOT` parameter (JSON containing all component images) and run against the assembled application. There's no simple way to add a "run benchmarks" step that exercises the full system — you'd need a running Konflux instance with realistic tenant workloads.
-- **The platform runs its own CI.** Konflux builds and tests itself using Konflux. A performance regression in the platform can slow down the platform's own CI, which delays detection of the regression — a self-referential problem.
-- **Multi-tenant resource contention matters.** A controller that works fine with 10 tenants might overwhelm the API server with 1000. Performance testing that doesn't simulate realistic tenant counts misses the most impactful regressions.
+- **Non-traditional "databases."** Performance problems may manifest differently than traditional N+1 queries — for example, excessive API server calls, unbounded queries, or components that bypass caches.
+- **Infrastructure-dependent testing.** Much code can't be meaningfully benchmarked in isolation — it needs a real or simulated environment, which requires significant infrastructure.
+- **Self-hosting feedback loops.** Platforms that build and test themselves face a self-referential problem: a performance regression can slow down detection of the regression.
+- **Multi-tenant resource contention.** Components that work fine at small scale might overwhelm shared resources at production scale. Performance testing that doesn't simulate realistic user counts misses the most impactful regressions.
 
 ## The landscape of performance problems
 
-Performance regressions in the konflux-ci codebase take forms specific to Kubernetes-native systems:
+Performance regressions take forms specific to the target platform's architecture. The examples below are drawn from Kubernetes-native systems but the patterns are broadly applicable:
 
 ### Controller and API server regressions
 
-- Excessive LIST calls to the Kubernetes API server (the Konflux equivalent of N+1 queries) — listing resources inside reconcile loops instead of using the local cache. (Kubernetes controllers maintain an in-process cache of cluster state, kept up to date via watch streams. Reading from this cache is essentially free; making direct API server calls is not. Agents frequently bypass the cache and make direct calls.)
+- Excessive LIST calls to the Kubernetes API server (the equivalent of N+1 queries for Kubernetes-native systems) — listing resources inside reconcile loops instead of using the local cache. (Kubernetes controllers maintain an in-process cache of cluster state, kept up to date via watch streams. Reading from this cache is essentially free; making direct API server calls is not. Agents frequently bypass the cache and make direct calls.)
 - Unbounded label selector queries that return far more objects than needed
 - Controllers that each set up their own watches on the same resource types instead of sharing a single cached view, multiplying API server load
 - Reconcile loops that re-fetch resources already available in the reconcile request
@@ -73,11 +71,11 @@ Linters and static analyzers can detect known performance anti-patterns without 
 
 Dedicated benchmarks that measure the performance of critical paths, run in CI, with regressions flagged automatically.
 
-**What it catches:** Performance regressions in benchmarked code paths. Go's built-in `testing.B` benchmarks work for pure logic, but most Konflux controller code interacts with the Kubernetes API, so benchmarks either need envtest (which simulates a real API server) or must be limited to self-contained helper functions.
+**What it catches:** Performance regressions in benchmarked code paths. Go's built-in `testing.B` benchmarks work for pure logic, but controller code that interacts with external APIs needs either simulated environments (like envtest for Kubernetes) or must be limited to self-contained helper functions.
 
 **What it misses:** Anything not benchmarked. Benchmark coverage tends to be sparse — teams write benchmarks for known hot paths but not for code that "shouldn't be" performance-sensitive (until an agent makes it so). More fundamentally, benchmarking a controller's reconcile loop in envtest doesn't capture real-world API server latency, etcd performance, or multi-tenant contention.
 
-**Trade-offs:** Benchmarks add CI time. Since Konflux CI runs as Tekton PipelineRuns, benchmark tasks add to pipeline execution time for every build. Benchmark results are noisy — performance varies between runs due to pod scheduling, node load, and resource contention in the shared cluster. Statistical approaches (running multiple iterations, comparing distributions) help but add more pipeline time and cluster cost.
+**Trade-offs:** Benchmarks add CI time. Benchmark tasks add to pipeline execution time for every build. Benchmark results are noisy — performance varies between runs due to scheduling, node load, and resource contention. Statistical approaches (running multiple iterations, comparing distributions) help but add more pipeline time and compute cost.
 
 **Agent relevance:** Agents are unlikely to write benchmarks on their own unless explicitly asked. The benchmark suite needs to be maintained by humans (or by agents specifically tasked with benchmark coverage as a goal).
 
@@ -89,9 +87,7 @@ Running the platform under realistic multi-tenant load and measuring controller 
 
 **What it misses:** Problems that only manifest at full production scale or with production tenant distributions.
 
-**Trade-offs:** Extremely expensive for Konflux specifically. "Realistic load" means a Kubernetes cluster running the full set of Konflux controllers, with simulated tenants creating Components, triggering PipelineRuns, running IntegrationTestScenarios against Snapshots, and executing release pipelines. This is a complex multi-service system where performance depends on the interactions between controllers, the API server, etcd, Tekton, and cluster scheduling. Standing up a representative environment is a significant infrastructure investment.
-
-Integration tests in Konflux are themselves Tekton pipelines that receive a `SNAPSHOT` parameter and run against the assembled application. Adding performance verification means either extending these existing integration test pipelines (which are already expensive to run) or creating a separate performance test infrastructure.
+**Trade-offs:** Extremely expensive for complex platforms. "Realistic load" means running the full set of platform components with simulated users exercising realistic workloads. Standing up a representative environment is a significant infrastructure investment. Adding performance verification means either extending existing integration test infrastructure (which is already expensive to run) or creating a separate performance test infrastructure.
 
 Options for when to run load tests:
 
@@ -130,7 +126,7 @@ Monitor production systems for performance anomalies and correlate them with rec
 
 **What it misses:** This isn't prevention — the regression is already in production. The goal is fast detection and rollback, not prevention.
 
-**Trade-offs:** Requires mature observability infrastructure. Konflux already generates platform execution signals (PipelineRun failure rates, scheduling latency, task execution times) that could serve as anomaly detection inputs — see the pipeline execution feedback discussion in PR #8. Requires automated rollback capability or fast human response. The lag between deployment and detection means some tenants experience the regression.
+**Trade-offs:** Requires mature observability infrastructure. Platforms that generate execution signals (failure rates, latency, execution times) can use them as anomaly detection inputs — see the [production feedback](production-feedback.md) discussion. Requires automated rollback capability or fast human response. The lag between deployment and detection means some users experience the regression.
 
 ## Agent-specific anti-patterns to watch for
 
@@ -153,7 +149,7 @@ These patterns are detectable by static analysis if codified into rules. The cha
 
 ## Open questions
 
-- Which detection mechanisms are worth investing in first for konflux-ci? Static analysis is cheapest but narrowest. Load testing is most thorough but most expensive — and in Konflux's case, requires a dedicated multi-tenant cluster. Where's the right starting point?
+- Which detection mechanisms are worth investing in first? Static analysis is cheapest but narrowest. Load testing is most thorough but most expensive. Where's the right starting point for a given organization?
 - How do we benchmark controller logic that depends on the Kubernetes API server? Envtest provides a real API server but not realistic latency or contention. Real clusters are expensive and noisy. Is there a middle ground?
 - Should there be a dedicated performance review sub-agent, or should performance concerns be folded into the existing correctness agent? Controller performance patterns are specialized enough that a general-purpose reviewer may miss them.
 - How do we set meaningful performance budgets for controllers that have never had them? What baseline measurement process makes sense when performance depends on cluster conditions and tenant count?
@@ -161,5 +157,5 @@ These patterns are detectable by static analysis if codified into rules. The cha
 - How do we handle the tension between CI speed and performance testing thoroughness? CI runs as Tekton PipelineRuns — every benchmark task added to the pipeline increases build time for every PR.
 - What role should production monitoring play? If we have good runtime anomaly detection (e.g., via the pipeline execution feedback signals described in PR #8) with fast rollback, does that reduce the need for pre-merge performance verification?
 - How do we prevent performance budgets from becoming stale? Controller workload profiles change as the platform gains tenants and features. Who reviews and updates budgets?
-- Are there konflux-ci-specific performance invariants that should be documented immediately (e.g., reconcile loop time limits, maximum API server request rates per controller, default pipeline execution time ceilings)?
+- Are there organization-specific performance invariants that should be documented immediately? See [applied docs](applied/) for examples.
 - How do we performance-test changes to build-definitions tasks that affect every tenant's build pipeline? A 30-second regression in a shared task multiplied across all tenants is a major impact, but testing it requires running real pipelines.

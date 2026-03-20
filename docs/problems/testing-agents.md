@@ -193,7 +193,7 @@ The main gap: deepeval's built-in metrics are oriented toward conversational AI 
 
 ### lightspeed-evaluation
 
-[lightspeed-evaluation](https://github.com/instructlab/lightspeed-evaluation) is an evaluation framework from the InstructLab project, focused on validating AI assistant behavior against expected task completions. It's worth noting because of its proximity to the Red Hat ecosystem that konflux-ci operates in:
+[lightspeed-evaluation](https://github.com/instructlab/lightspeed-evaluation) is an evaluation framework from the InstructLab project, focused on validating AI assistant behavior against expected task completions:
 
 - Designed for evaluating instruction-following behavior, which is conceptually close to testing whether an agent's instructions produce the intended behavior
 - Includes task-based evaluation patterns where inputs and expected outcomes are defined declaratively
@@ -263,7 +263,7 @@ Beyond testing individual instruction changes, there's a need for ongoing monito
 - How do we bootstrap the golden set? Do we start with synthetic examples, or do we capture real-world cases from early human-supervised agent operation?
 - Who maintains the test suite for each agent? Is it the agent's instruction author, a separate testing team, or the agent itself (self-testing)?
 - How do we handle model provider updates that change behavior without any instruction changes? Is periodic re-evaluation sufficient, or do we need real-time drift detection?
-- What's the cost budget for agent testing? Running hundreds of LLM evaluations per instruction change could be expensive — both in LLM API costs and in cluster resources, since these evaluations would run as Tekton tasks.
+- What's the cost budget for agent testing? Running hundreds of LLM evaluations per instruction change could be expensive — both in LLM API costs and in compute resources for running the evaluations in CI.
 - Should agent tests be public (in the repo) or private (to avoid teaching attackers what the agents check for)? There's a tension between transparency and security.
 - Can agents test other agents, or does that create circular trust dependencies? (Agent A tests Agent B, but who tests Agent A?)
 - How do we test cross-agent composition without combinatorial explosion of test scenarios?

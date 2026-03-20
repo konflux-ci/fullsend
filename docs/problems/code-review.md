@@ -46,7 +46,7 @@ This maps directly to the zero-trust principle from the [security threat model](
 
 ### The specialization argument
 
-Different review concerns require different context. A correctness reviewer needs deep understanding of the codebase's logic and patterns. A security reviewer needs knowledge of common vulnerability patterns and Konflux's specific threat model. An intent alignment reviewer needs access to the intent repo and the feature authorization state. Loading all of this context into one agent is wasteful — each sub-agent loads only the context relevant to its concern, using its context window more effectively.
+Different review concerns require different context. A correctness reviewer needs deep understanding of the codebase's logic and patterns. A security reviewer needs knowledge of common vulnerability patterns and the organization's specific threat model. An intent alignment reviewer needs access to the intent repo and the feature authorization state. Loading all of this context into one agent is wasteful — each sub-agent loads only the context relevant to its concern, using its context window more effectively.
 
 ## Review sub-agent decomposition
 
@@ -74,7 +74,7 @@ Evaluates whether the change matches an authorized intent and whether its scope 
 
 ### Platform security agent
 
-Reviews changes for threats to Konflux itself.
+Reviews changes for threats to the platform itself. The specific concerns depend on the organization's domain — see [applied docs](applied/) for organization-specific security agent configurations.
 
 - RBAC and authorization changes
 - Authentication flows
@@ -86,14 +86,9 @@ Reviews changes for threats to Konflux itself.
 
 ### Content security agent
 
-Reviews changes that affect the CI/CD content passing through Konflux — protecting Konflux's users.
+For platform organizations (CI/CD systems, cloud services, etc.), reviews changes that affect content passing through the platform — protecting the platform's users. The specific concerns are organization-dependent — see [applied docs](applied/) for examples.
 
-- Pipeline definition handling — can a user's pipeline definition escape its sandbox?
-- Build configuration — can build parameters be manipulated?
-- Release policy — can release gates be bypassed?
-- Artifact integrity — can artifacts be tampered with?
-
-**Context needed:** The diff, pipeline/build/release code paths, sandboxing mechanisms.
+**Context needed:** The diff, platform-specific code paths, sandboxing mechanisms.
 
 ### Injection defense agent
 

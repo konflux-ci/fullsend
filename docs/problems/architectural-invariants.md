@@ -11,16 +11,18 @@ The [intent representation](intent-representation.md) doc focuses on feature-lev
 
 Architectural invariants are not features. They're constraints on *how* features get implemented and *what* features are acceptable. A feature might be authorized at Tier 2, but if its implementation violates an architectural invariant, it should still be rejected — or the invariant needs to be explicitly revised through a governed process.
 
-## The konflux-ci/architecture repo
+## Architecture documentation as invariant source
 
-Konflux already has a form of declared architectural intent: the [konflux-ci/architecture](https://github.com/konflux-ci/architecture) repo. It contains:
+Many organizations maintain a form of declared architectural intent — an architecture repo, a wiki, ADRs in each repo, or some combination. These contain:
 
-- **Overview documents** — the authoritative latest state of agreed technical and architectural decisions, organized per service (build-service, integration-service, release-service, enterprise-contract, pipeline-service, hybrid-application-service, konflux-ui)
-- **60+ Architecture Decision Records (ADRs)** — formal records of significant architectural choices, covering pipeline architecture, RBAC, namespace design, build provenance, task versioning, trusted task models, and more
-- **Architecture diagrams** — draw.io SVGs documenting system structure
-- **Contribution requirements** — significant changes require ADRs and 2 peer approvals; clarifications require 1 approval
+- **Overview documents** — the authoritative latest state of agreed technical and architectural decisions, organized per service or component
+- **Architecture Decision Records (ADRs)** — formal records of significant architectural choices
+- **Architecture diagrams** — documenting system structure
+- **Contribution requirements** — what process is needed to change architectural decisions
 
-This repo was created by and for humans. But it's already a machine-readable (or at least machine-parseable) source of architectural constraints. The question is: how do agents consume and enforce it?
+This documentation was created by and for humans. But it's already a machine-readable (or at least machine-parseable) source of architectural constraints. The question is: how do agents consume and enforce it?
+
+See [applied docs](applied/) for organization-specific architecture repo examples.
 
 ## Three uses for architectural invariants
 
@@ -29,9 +31,9 @@ This repo was created by and for humans. But it's already a machine-readable (or
 Review sub-agents — particularly the correctness and intent alignment agents — can check PRs against declared invariants:
 
 - Does this change violate the dependency flow described in the architecture overview?
-- Does it contradict an ADR? (e.g., ADR-0053 defines a trusted task model — a PR that bypasses it should be flagged)
-- Does it introduce a pattern that conflicts with documented conventions? (e.g., ADR-0006 defines log conventions)
-- Does it change an API contract without updating the architecture doc? (e.g., ADR-0013 defines integration service API contracts)
+- Does it contradict an ADR? (e.g., an ADR defines a trusted component model — a PR that bypasses it should be flagged)
+- Does it introduce a pattern that conflicts with documented conventions? (e.g., an ADR defines log conventions)
+- Does it change an API contract without updating the architecture doc?
 
 This is different from linting. Linters catch syntax and style violations. Architectural invariant enforcement catches *structural and design* violations — wrong dependency direction, unauthorized service-to-service communication, policy bypass.
 
@@ -41,7 +43,7 @@ Beyond per-PR checks, a drift detection agent can periodically scan the codebase
 
 - Are the actual service boundaries consistent with the documented architecture?
 - Are the actual API contracts consistent with the documented contracts?
-- Has naming convention drift occurred? (ADR-0030 defines Tekton Results naming conventions)
+- Has naming convention drift occurred?
 - Are deprecated patterns still present? (ADRs that supersede earlier ones)
 
 When deviations are found, the drift agent can open cleanup PRs — similar to OpenAI's "garbage collection" concept, but grounded in declared architectural constraints rather than style preferences. These cleanup PRs would be Tier 0 (standing rules, pre-authorized) since they're enforcing already-agreed invariants.
@@ -51,9 +53,9 @@ When deviations are found, the drift agent can open cleanup PRs — similar to O
 Architectural invariants help solve the [tier escalation problem](intent-representation.md#the-tier-escalation-problem). A change classified as Tier 1 (tactical bug fix) that violates or modifies an architectural invariant is not a bug fix — it's at minimum a Tier 2 change requiring explicit authorization. The architecture repo provides the baseline for this detection.
 
 Examples:
-- A "bug fix" that changes the namespace name format (ADR-0012) → architectural change, needs authorization
+- A "bug fix" that changes a naming convention defined by an ADR → architectural change, needs authorization
 - A "small improvement" that adds a new service-to-service communication path → architecture change
-- A "fix" that modifies RBAC roles (ADR-0011) → security-relevant architecture change
+- A "fix" that modifies RBAC roles → security-relevant architecture change
 
 ## Making invariants machine-enforceable
 
@@ -71,15 +73,15 @@ Review agents read the architecture docs and ADRs as context. They use their und
 Add machine-readable annotations to ADRs and architecture docs — structured frontmatter, explicit invariant declarations, or a companion file that extracts the key constraints in a structured format.
 
 ```yaml
-# Example: structured invariant extracted from ADR-0053
-invariant: trusted-task-model
-description: All tasks in build pipelines must use the trusted task model
+# Example: structured invariant extracted from an ADR
+invariant: trusted-component-model
+description: All components in the pipeline must use the trusted component model
 applies_to:
-  - build-service
-  - pipeline-service
+  - service-a
+  - service-b
 enforcement: blocking  # PR-level review must flag violations
 references:
-  - ADR/0053-trusted-task-model.md
+  - ADR/NNNN-trusted-component-model.md
 ```
 
 **Pros:** Agents can evaluate compliance mechanically. Consistent interpretation. Auditable.

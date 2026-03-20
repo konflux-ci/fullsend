@@ -13,7 +13,7 @@ Agents need:
 - **Resources** — access to repos, CI artifacts, intent sources, and possibly internal APIs in a controlled way
 - **Observability** — logs, traces, and auditability so we can attribute actions and debug failures
 
-The choice of platform affects cost, lock-in, compliance, integration with existing konflux-ci systems, and how we scale (per-repo vs shared agents — see agent-architecture open questions).
+The choice of platform affects cost, lock-in, compliance, integration with existing organizational systems, and how we scale (per-repo vs shared agents — see agent-architecture open questions).
 
 ## The three directions
 
@@ -28,12 +28,12 @@ Use a commercial or open-source platform that provides agent runtime, orchestrat
 **Open questions:**
 
 - Which vendors support our constraints (no coordinator agent, status-check–driven coordination, CODEOWNERS as authority)?
-- What data leaves our boundary, and is that acceptable for konflux-ci?
+- What data leaves our boundary, and is that acceptable for the organization?
 - Can we run their stack in our environment (e.g. self-hosted) or is it only SaaS?
 
 ### Use existing internal solutions
 
-Leverage infrastructure konflux-ci or the broader org already runs — e.g. CI runners, internal Kubernetes, shared platforms — and run agents as workloads on that infrastructure.
+Leverage infrastructure the organization already runs — e.g. CI runners, internal Kubernetes, shared platforms — and run agents as workloads on that infrastructure.
 
 **Pros:** No new vendor, data stays internal, consistent with existing operational and security practices, possible reuse of identity and secrets management.
 
@@ -56,7 +56,7 @@ Design and operate dedicated agent infrastructure: runner pool, sandboxing, tool
 **Open questions:**
 
 - What is the minimum viable agent runtime (e.g. “run one review agent in a container with repo access and status-check API”)?
-- How does it integrate with existing konflux-ci CI/CD (e.g. Tekton, task runner, build-definitions)?
+- How does it integrate with the organization's existing CI/CD infrastructure?
 - Can we iterate with a thin custom layer on top of internal or 3rd party compute and only “build our own” where we must?
 
 ## Hybrid and incremental options
@@ -76,6 +76,6 @@ Design and operate dedicated agent infrastructure: runner pool, sandboxing, tool
 
 - What is the right level of isolation per agent (process, container, microVM, separate cluster)?
 - How do we provide agents with “resources to do their work” (clone, tools, APIs) without over-privileging them or creating a single high-value target?
-- Do we need a dedicated “agent runner” image or environment (similar in spirit to the existing [task runner](https://github.com/konflux-ci/architecture/blob/main/ADR/0046-common-task-runner-image.md) for Tekton) with a known, auditable tool set?
+- Do we need a dedicated “agent runner” image or environment with a known, auditable tool set?
 - How do we compare 3rd party vs internal vs build-our-own on concrete criteria: cost, time to first agent, compliance, and alignment with our security and coordination model?
 - Who in the org would own and operate agent infrastructure, and how does that align with existing platform or CI ownership?

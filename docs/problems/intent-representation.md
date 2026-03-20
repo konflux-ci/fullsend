@@ -8,7 +8,7 @@ How do we capture, verify, and enforce what changes are wanted — so that agent
 
 Today's intent enforcement has two components that humans fuse together unconsciously:
 
-1. **The formal record** (JIRA states, rank, refinement trackers) — this is explicit but gameable. In the current KONFLUX JIRA project, features move through states (draft, pending approval, approved, in progress, etc.) and are ranked. Higher-ranked features should be worked on first. Features in "pending approval" require review from named architects and product managers. However, there are no ACLs that prevent an unauthorized person from zipping through the refinement states and closing all the trackers, making a feature look authorized and ready to go.
+1. **The formal record** (JIRA states, rank, refinement trackers) — this is explicit but gameable. In a typical JIRA project, features move through states (draft, pending approval, approved, in progress, etc.) and are ranked. Higher-ranked features should be worked on first. Features in "pending approval" require review from named architects and product managers. However, there are often no ACLs that prevent an unauthorized person from zipping through the refinement states and closing all the trackers, making a feature look authorized and ready to go.
 
 2. **The informal network** (standup conversations, hallway knowledge, "I know what we talked about last week") — this is the real enforcement mechanism today. Humans detect anomalies because they have ambient awareness of what's "in flight." If a code review comes in for something unfamiliar, they look more closely. They cross-reference incoming PRs with what they know was discussed in meetings.
 
@@ -38,14 +38,14 @@ Not all changes require the same level of intent verification:
 | Bug fix (clear reproduction) | Low — the bug report itself is the intent | "Fix nil pointer in controller when X is nil" |
 | Small improvement | Low-moderate — linked issue sufficient | "Add retry logic for flaky API call" |
 | New feature | High — needs explicit authorization | "Add support for multi-arch builds" |
-| API change | High — affects consumers | "Change Snapshot CRD schema" |
+| API change | High — affects consumers | "Change API schema" |
 | UX change | High — affects users | "Redesign pipeline visualization" |
 | Architectural change | Very high — affects multiple repos | "Migrate from X to Y across the org" |
 | New component | Very high — creates ongoing maintenance | "Add a new notification service" |
 
 ## Approach 1: Git as the intent ledger
 
-Move intent representation out of JIRA and into git. A dedicated repo (e.g., `konflux-ci/intent` or `konflux-ci/features`) where features are proposed, explored, and authorized through PRs with CODEOWNERS-enforced signoff.
+Move intent representation out of JIRA and into git. A dedicated repo (e.g., `<org>/intent` or `<org>/features`) where features are proposed, explored, and authorized through PRs with CODEOWNERS-enforced signoff.
 
 ### Structure
 
@@ -125,7 +125,7 @@ This is where the git-based authorization mechanism (Approach 1) kicks in. The f
 
 - Cross-org changes affecting multiple repos
 - Deprecations and removals
-- Changes that affect the public API contract between Konflux and its users
+- Changes that affect the public API contract between the platform and its users
 
 Possibly requires an RFC-like process with a community review period, in addition to the git-based authorization.
 
@@ -142,7 +142,7 @@ How does a review agent verify which tier a change falls into? This is non-trivi
 
 ## Approach 3: Intent as cryptographic attestation
 
-Borrowing from Konflux's own SLSA provenance model — intent authorization produces a signed attestation.
+Borrowing from supply chain attestation models (e.g., SLSA provenance) — intent authorization produces a signed attestation.
 
 - A human (or group of humans) signs a statement: "Feature X is authorized for implementation in repos A, B, C"
 - The attestation is verifiable and tamper-proof
@@ -152,7 +152,7 @@ Borrowing from Konflux's own SLSA provenance model — intent authorization prod
 ### What this buys you
 
 - Stronger security properties than git-based CODEOWNERS (cryptographic rather than access-control based)
-- Thematically consistent with what Konflux already does for build provenance
+- Thematically consistent with what organizations already do for build provenance
 - Harder to forge than JIRA state transitions or even git approvals
 
 ### What's hard
@@ -268,7 +268,7 @@ This combination addresses the JIRA ACL weakness, provides audit trails, and sca
 - Can intent be composed? If three Tier 1 changes together constitute an unauthorized Tier 2 feature, who notices?
 - How do we prevent the intent repo from becoming a bottleneck at agent speed?
 - What does the feature file format look like? How much structure is needed for agents to evaluate programmatically, and could an AI-driven "vibe-to-spec" workflow using tools like spec-kit reliably generate this required structure (functional requirements, acceptance scenarios, state machines etc) directly from rapid human prototyping?
-- How do we handle the migration from JIRA? Can the two systems coexist during transition?
+- How do organizations handle migration from existing issue tracking systems (e.g., JIRA)? Can the two systems coexist during transition?
 - What's the relationship between intent tiers and CODEOWNERS in the target repos? Are guarded paths a proxy for "changes here are always Tier 2+"?
 - Cross-repo intent: when a feature spans multiple repos, is it one feature file referencing multiple repos, or multiple feature files?
 - How does the "try it" pattern work for changes that can't be meaningfully evaluated without merging? (e.g., infrastructure changes, deployment config)

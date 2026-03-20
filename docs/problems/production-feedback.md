@@ -8,23 +8,13 @@ Any project adopting an agentic software factory model faces a general question:
 
 Instead of waiting for humans to notice failures and file issues, agents could potentially observe system behavior directly and use those signals to guide triage, prioritization, and validation of fixes. This applies to any observable production system — latency regressions, error rate spikes, resource exhaustion, SLO burn — not just pipelines.
 
-For Konflux specifically, the most immediate and richest production signals are pipeline execution signals: PipelineRun failures, TaskRun error distributions, scheduling latency, and integration test outcomes. These are the Konflux-specific particulars of what is otherwise a general problem.
+The specific production signals vary by organization — see [applied docs](applied/) for organization-specific examples.
 
-## Why this is a unique opportunity for Konflux
+## Why this is an opportunity for platform organizations
 
 Most software projects must create synthetic feedback loops through tests and simulations — they have no direct window into production behavior beyond what they instrument explicitly.
 
-As a CI/CD platform, Konflux continuously generates high-volume, structured execution data across tenant namespaces:
-
-- Every PipelineRun completion, failure, and timeout
-- Every TaskRun failure with its error category and log output
-- Queue depth, scheduling latency, and resource contention signals
-- Integration test outcomes across snapshots and components
-- Release pipeline success and failure rates
-
-This data reflects actual production behavior of the platform.
-
-The question is how this signal surface should be incorporated into an agentic development lifecycle.
+Platform organizations (CI/CD systems, cloud services, infrastructure providers) continuously generate high-volume, structured execution data. This data reflects actual production behavior of the platform. The question is how this signal surface should be incorporated into an agentic development lifecycle.
 
 **The opportunity**: close the loop between what the platform does in production and what agents work on next.
 
@@ -32,29 +22,23 @@ The question is how this signal surface should be incorporated into an agentic d
 
 ### Platform execution signals
 
-The aggregate behavior of Konflux as a platform across all tenant namespaces:
+The aggregate behavior of the platform across all users or tenants. The specific signals depend on the platform's domain — for example, a CI/CD platform would track pipeline execution metrics, while a cloud service might track API availability and response times.
 
-- PipelineRun failure rates by failure category (timeout, task failure, scheduling failure, image pull failure)
-- TaskRun failure distributions by task type (e.g., elevated failures in a specific build, scan, or signing task across multiple tenants)
-- Queue depth and scheduling latency trends
-- Integration test outcome distributions by integration scenario type
-- Release pipeline failure rates and which stages fail most often
+These signals reflect platform-level reliability. A spike in a specific failure category across many users is not a user problem — it's a platform bug.
 
-These signals reflect platform-level reliability. A spike in a specific failure category across many tenants is not a user problem — it's a platform bug.
+### Internal dogfooding signals
 
-### Tenant pipeline signals
+When a platform uses itself (e.g., a CI/CD system building itself), internal execution signals carry additional meaning:
 
-Tenant teams use Konflux to build. The PipelineRuns in Konflux's own build-definitions and tenant namespaces are a subset of platform signals, but they carry additional meaning:
-
-- Test failures in Konflux's own e2e test suite often correlate directly with code paths
-- Build failures in Konflux's own component builds trace back to specific repos and commits
-- Integration test failures across Konflux snapshots reflect cross-service compatibility breaks
+- Test failures in the project's own test suite often correlate directly with code paths
+- Build failures in component builds trace back to specific repos and commits
+- Integration test failures reflect cross-service compatibility breaks
 
 These are the signals that today trigger human investigation. With structured logging and code path correlation, they can trigger agent investigation instead.
 
 ### User-reported failure patterns
 
-GitHub issues, support tickets, and user-filed bugs represent a third signal category — lagging indicators that often correspond to platform-observable leading indicators. A user who files "my PipelineRun keeps timing out" is reporting something that should be visible in the platform signal days or weeks before the ticket appears.
+GitHub issues, support tickets, and user-filed bugs represent a third signal category — lagging indicators that often correspond to platform-observable leading indicators. A user reporting a recurring failure is reporting something that should be visible in the platform signal days or weeks before the ticket appears.
 
 Correlating user-reported problems with platform signals serves two purposes:
 
@@ -63,9 +47,9 @@ Correlating user-reported problems with platform signals serves two purposes:
 
 ## Potential agent interactions with signals
 
-**Triage agent** monitors signal distributions and creates issues when failure patterns exceed thresholds — without waiting for a human to notice and report. A sustained increase in TaskRun failures across tenant namespaces for a given task type is equivalent to dozens of individual bug reports. The agent files a single well-scoped issue with affected versions, sample logs, and time-of-onset. This is signal-driven rather than report-driven triage: the signal is the bug report. Broad, multi-tenant patterns suggesting architectural root causes should be escalated to Tier 2 at creation time.
+**Triage agent** monitors signal distributions and creates issues when failure patterns exceed thresholds — without waiting for a human to notice and report. A sustained increase in failures across users for a given operation type is equivalent to dozens of individual bug reports. The agent files a single well-scoped issue with affected versions, sample logs, and time-of-onset. This is signal-driven rather than report-driven triage: the signal is the bug report. Broad, multi-user patterns suggesting architectural root causes should be escalated to Tier 2 at creation time.
 
-**Priority agent** weights open issues by breadth of impact (tenants affected), depth (fraction of PipelineRuns failing), duration, and rate of change. Priority updates dynamically as the signal evolves — not only when a human re-triages.
+**Priority agent** weights open issues by breadth of impact (users affected), depth (fraction of operations failing), duration, and rate of change. Priority updates dynamically as the signal evolves — not only when a human re-triages.
 
 **Review agent** uses platform reliability history to calibrate scrutiny on PRs. A code path responsible for a high fraction of recent scheduling timeouts or failure spikes warrants deeper edge-case analysis than a low-traffic utility. This also feeds tier classification — a "bug fix" touching a historically high-blast-radius path may warrant Tier 2 treatment regardless of how the issue was filed.
 
@@ -99,9 +83,9 @@ Signal worsens significantly → andon cord: revert proposed, agent activity in 
 
 ## The attribution problem
 
-The hardest problem is distinguishing platform failures from user configuration errors or supply chain changes. A TaskRun failure spike across tenants has three candidate causes: a platform bug, simultaneous user config changes (unlikely but possible), or an external dependency change (base image, registry, upstream tool). platform signals alone don't resolve this — attribution requires correlating the spike with recent Konflux deploys, task version changes, external signals, and failure log content.
+The hardest problem is distinguishing platform failures from user configuration errors or supply chain changes. A failure spike across users has three candidate causes: a platform bug, simultaneous user config changes (unlikely but possible), or an external dependency change. Platform signals alone don't resolve this — attribution requires correlating the spike with recent deploys, component version changes, external signals, and failure log content.
 
-Without reliable attribution, the triage agent files issues for problems Konflux doesn't own. A platform bug causes correlated failures across tenants with different codebases; user bugs don't — but this distinction is statistical, not deterministic.
+Without reliable attribution, the triage agent files issues for problems the platform doesn't own. A platform bug causes correlated failures across users with different configurations; user bugs don't — but this distinction is statistical, not deterministic.
 
 ## Challenges and risks
 
@@ -109,15 +93,15 @@ Without reliable attribution, the triage agent files issues for problems Konflux
 
 **Causal inference**: A signal change following a deploy doesn't prove causation. Multiple changes ship simultaneously. Distinguishing correlation from causation requires canary rollouts with per-cohort signal comparison, or statistical change point detection.
 
-**Feedback latency**: Post-merge validation closes slowly when pipeline volume is low. If only a few hundred PipelineRuns execute daily in affected configurations, confirming a fix took effect may take days — creating pressure to declare success prematurely.
+**Feedback latency**: Post-merge validation closes slowly when execution volume is low. If only a few hundred operations execute daily in affected configurations, confirming a fix took effect may take days — creating pressure to declare success prematurely.
 
-**Privacy and multi-tenancy boundaries**: Aggregated metrics are safe to consume; raw TaskRun logs from user pipelines may contain sensitive content. Signals must be aggregated or sanitized before entering agent context, which reduces attribution accuracy.
+**Privacy and multi-tenancy boundaries**: Aggregated metrics are safe to consume; raw execution logs from user workloads may contain sensitive content. Signals must be aggregated or sanitized before entering agent context, which reduces attribution accuracy.
 
 **Signal gaming**: A failure rate already declining before a fix deploys looks like a success. Post-merge validation must compare against baseline trends, not point-in-time snapshots.
 
 **Alert fatigue at agent scale**: Filing an issue for every anomalous signal generates more work than can be absorbed. The triage agent needs minimum thresholds on duration, breadth, and statistical significance before acting.
 
-**False-positive remediation loops**: When attribution misclassifies a user error or supply chain change as a platform bug, the implementation agent proposes a fix. The fix merges, deploys, and the signal is unchanged — because the root cause was never in Konflux's code. The issue re-opens and the cycle repeats. Each iteration adds real codebase changes that increase complexity without improving reliability. If reviewers see repeated small patches to the same area with no visible effect, they may begin rubber-stamping — eroding the oversight that would otherwise catch the loop.
+**False-positive remediation loops**: When attribution misclassifies a user error or supply chain change as a platform bug, the implementation agent proposes a fix. The fix merges, deploys, and the signal is unchanged — because the root cause was never in the platform's code. The issue re-opens and the cycle repeats. Each iteration adds real codebase changes that increase complexity without improving reliability. If reviewers see repeated small patches to the same area with no visible effect, they may begin rubber-stamping — eroding the oversight that would otherwise catch the loop.
 
 Detection requires two complementary stopping conditions. First, iteration count: if post-merge validation shows no improvement across N consecutive iterations on the same signal, the loop must halt and escalate to human investigation. Second, cost budget: each iteration burns compute resources and token budget — CI runs, agent context processing, code review cycles. A runaway loop is not just an oversight risk; it is a measurable resource cost. Budget exhaustion per signal (e.g., cumulative agent cost above a threshold for a single issue lineage) should be an independent stopping condition, not a consequence of hitting the iteration cap. Both limits must be built in explicitly and both must trigger escalation, not silent abandonment.
 
@@ -135,7 +119,7 @@ There is also a governance question: if production feedback can autonomously cre
 
 ## Open questions
 
-- What platform-level metrics does Konflux already expose for agent consumption? How granular is the failure categorization in the existing Prometheus stack?
+- What platform-level metrics does the target organization already expose for agent consumption? How granular is the failure categorization in the existing observability stack?
 - How do we implement structured error tagging so failures carry machine-parseable identifiers mapping to code paths? Greenfield or extensible from existing logging?
 - Should agents have direct read access to platform metrics at review time, or should reliability history be pre-computed as code-path annotations?
 - What is the right granularity for code path reliability history — per-function is too noisy, per-service too coarse; per-subsystem or per-file may be right.
@@ -144,4 +128,4 @@ There is also a governance question: if production feedback can autonomously cre
 - What is the right stopping condition for a false-positive remediation loop — iteration count, cost budget, or both — and who resets those counters once a human has investigated? How is cumulative agent cost tracked per issue lineage?
 - What attribution confidence threshold separates an implementation-ready issue from a human-triage observation, and how is that confidence measured in practice?
 - Should signal-driven issue creation be gated behind human approval initially (shadow mode) before graduating to fully autonomous triage?
-- How do we ensure failure signals don't leak user-sensitive content from raw TaskRun logs into agent context?
+- How do we ensure failure signals don't leak user-sensitive content from raw execution logs into agent context?

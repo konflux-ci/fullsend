@@ -39,7 +39,7 @@ This is still fatiguing, in different ways:
 
 ## Contributor motivation in open source
 
-Konflux-ci is an open-source project. Contributors participate for reasons beyond a paycheck — learning, building reputation, solving interesting problems, and being part of a community.
+Many target organizations are open-source projects. Contributors participate for reasons beyond a paycheck — learning, building reputation, solving interesting problems, and being part of a community.
 
 If agents handle routine contributions, what's left for human contributors?
 
@@ -49,7 +49,7 @@ If agents handle routine contributions, what's left for human contributors?
 
 ## Job security and professional value
 
-Most konflux-ci contributors are paid engineers. For them, the concerns above have an additional dimension:
+Most contributors in many target organizations are paid engineers. For them, the concerns above have an additional dimension:
 
 - If agents can do the routine 80% of the work, organizations need fewer engineers for the same output. The remaining engineers need to be the ones capable of the hard 20%.
 - The transition period is particularly uncomfortable — people are being asked to help build a system that may reduce the need for their role.

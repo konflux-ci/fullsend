@@ -66,6 +66,6 @@ How are governance decisions made, and how does the community participate?
 
 - Should governance itself be subject to the agentic system, or is it always human-operated? (Strong argument for always-human: agents governing themselves is a security risk.)
 - How do we handle disagreements between repo maintainers and org-wide policy? What's the appeal process?
-- What's the relationship between governance of the agentic system and governance of Konflux itself? Are they the same body, or separate?
+- What's the relationship between governance of the agentic system and governance of the target organization itself? Are they the same body, or separate?
 - How do we prevent governance from becoming a bottleneck? If every policy change requires broad consensus, experimentation slows down.
 - What's the minimum viable governance for getting started? We don't need the full model on day one — what's the smallest governance structure that lets us begin experimenting safely?

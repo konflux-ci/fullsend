@@ -2,14 +2,14 @@
 
 What agents exist, what authority do they have, and how do they interact?
 
-## The dual security context
+## The dual security context (platform organizations)
 
-Konflux is a CI/CD system. Agents operating on it have two distinct security responsibilities:
+Some target organizations — particularly platform providers (CI/CD systems, cloud services, infrastructure) — have two distinct security responsibilities:
 
-1. **Protecting the system itself** — agents reviewing changes to Konflux components (controllers, operators, services) need to guard against threats to the platform
-2. **Protecting content passing through the system** — agents reviewing pipeline definitions, build configurations, and release policies need to guard against threats that would affect Konflux users
+1. **Protecting the system itself** — agents reviewing changes to platform components need to guard against threats to the platform
+2. **Protecting content passing through the system** — agents reviewing configurations that affect platform users need to guard against threats that would affect those users
 
-These may require different agent specializations with different domain knowledge.
+These may require different agent specializations with different domain knowledge. See [applied docs](applied/) for organization-specific security contexts.
 
 ## Core principle: trust derives from repository permissions, not agent identity
 

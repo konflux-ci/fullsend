@@ -22,13 +22,13 @@ There are two different standards, because the org doesn't control what language
 
 ### In-house code
 
-Code owned by konflux-ci — services, controllers, tooling — should meet the language criteria directly. When new tooling is created or experiments graduate to production, prefer languages that satisfy static typing, error locality, refactoring safety, mature tooling, and simple deployment.
+Code owned by the organization — services, controllers, tooling — should meet the language criteria directly. When new tooling is created or experiments graduate to production, prefer languages that satisfy static typing, error locality, refactoring safety, mature tooling, and simple deployment.
 
 This doesn't mean rewriting existing code. It means that when choosing a language for new work, agents benefit from typed languages with strong tooling ecosystems.
 
 ### Consumed dependencies
 
-Upstream libraries and services (hermeto/cachi2, PatternFly, Tekton, third-party libraries) can't be required to change languages. The requirement shifts to the integration boundary:
+Upstream libraries and services (third-party libraries, external tools, platform SDKs) can't be required to change languages. The requirement shifts to the integration boundary:
 
 **Schema-validated inputs and outputs** — if the org's code calls an external service or library, the contract should be explicit and validated. API schemas, protobuf definitions, OpenAPI specs — anything that makes the boundary machine-checkable.
 
@@ -38,7 +38,7 @@ Upstream libraries and services (hermeto/cachi2, PatternFly, Tekton, third-party
 
 **Narrow contact surface** — minimize the API surface the org's code touches. Don't import an entire library when you only need one function. Wrap external dependencies in adapters that expose only the needed functionality.
 
-Example: hermeto (the build dependency solver) is written in Python. It runs as a container image invoked from Tekton tasks. The integration boundary is already container-isolated — hermeto's internal implementation language doesn't leak into the rest of the system. The risks are config schema drift and unvalidated outputs. The mitigation isn't rewriting hermeto; it's schema-validating the inputs, pinning the image digest, and testing the contract.
+When a consumed dependency runs as a container image, the integration boundary is already container-isolated — the dependency's internal implementation language doesn't leak into the rest of the system. The risks are config schema drift and unvalidated outputs. The mitigation is schema-validating the inputs, pinning the image digest, and testing the contract. See [applied docs](applied/) for organization-specific examples.
 
 ## Relationship to other problem areas
 
