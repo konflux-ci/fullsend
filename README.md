@@ -29,6 +29,7 @@ This is not a product spec. It's an evolving exploration of a hard problem space
   - [Performance Verification](docs/problems/performance-verification.md) — Catching agent-introduced performance regressions before they reach production
   - [Production Feedback](docs/problems/production-feedback.md) — How platform execution signals feed back into what agents work on and how they assess risk
   - [Testing the Agents](docs/problems/testing-agents.md) — CI for prompts: regression testing, eval frameworks, and behavioral verification for agent instructions
+  - [Self-Improvement Flywheel](docs/problems/self-improvement-flywheel.md) — How the system learns from its own outputs and from human corrections to produce better decisions over time
 - **[docs/problems/applied/](docs/problems/applied/)** — Organization-specific considerations for downstream consumers:
   - [konflux-ci](docs/problems/applied/konflux-ci/) — Kubernetes-native CI/CD platform (the original proving ground)
 - **[docs/ADRs/](docs/ADRs/)** — Architecture Decision Records for crystallizing specific decisions (see [ADR 0001](docs/ADRs/0001-use-adrs-for-decision-making.md))
