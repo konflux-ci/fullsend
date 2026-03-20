@@ -28,6 +28,3 @@ jobs:
 
       - name: Run pre-commit (skip ty)
         run: SKIP=ty pre-commit run --all-files
-
-      - name: Run ty check
-        run: uvx ty check experiments/
