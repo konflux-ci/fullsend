@@ -29,6 +29,7 @@ This is not a product spec. It's an evolving exploration of a hard problem space
   - [Performance Verification](docs/problems/performance-verification.md) — Catching agent-introduced performance regressions before they reach production
   - [Production Feedback](docs/problems/production-feedback.md) — Konflux runs PipelineRuns at scale; how do platform execution signals (failure patterns, task error distributions, latency trends) feed back into what agents work on and how they assess risk
   - [Testing the Agents](docs/problems/testing-agents.md) — CI for prompts: regression testing, eval frameworks, and behavioral verification for agent instructions
+  - [Operational Observability](docs/problems/operational-observability.md) — How do the humans operating an autonomous software factory understand what it is doing, debug it when it goes wrong, and improve it over time?
 - **[docs/landscape.md](docs/landscape.md)** — Survey of existing AI code review tools and how they relate to our goals (time-sensitive — check the date)
 - **[experiments/](experiments/)** — Logs and results from trying things in practice
 
