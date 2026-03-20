@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# lint-adr-status - Validate ADR statuses for all ADR files
+#
+# Adapted from https://github.com/konflux-ci/architecture/blob/main/hack/lint-adr-status
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UTIL_DIR="$SCRIPT_DIR/util"
+ADR_DIR="docs/ADRs"
+
+error() { echo "ERROR: $1" >&2; }
+success() { echo "OK: $1"; }
+info() { echo "INFO: $1"; }
+warning() { echo "WARNING: $1"; }
+
+if [[ ! -f "$UTIL_DIR/get-adr-status.sh" ]]; then
+    error "get-adr-status.sh script not found in $UTIL_DIR"
+    exit 1
+fi
+
+if [[ ! -x "$UTIL_DIR/get-adr-status.sh" ]]; then
+    error "get-adr-status.sh script is not executable"
+    exit 1
+fi
+
+adr_files=()
+while IFS= read -r -d '' file; do
+    adr_files+=("$file")
+done < <(find "$ADR_DIR" -name "*.md" -type f ! -name "0000-adr-template.md" -print0 | sort -z)
+
+if [[ ${#adr_files[@]} -eq 0 ]]; then
+    warning "No ADR markdown files found in $ADR_DIR/"
+    exit 0
+fi
+
+info "Found ${#adr_files[@]} ADR files to check"
+
+errors=0
+
+echo "Checking ADR statuses..."
+echo "========================"
+
+for file in "${adr_files[@]}"; do
+    filename=$(basename "$file")
+    echo -n "$filename: "
+
+    if status=$("$UTIL_DIR/get-adr-status.sh" "$file" 2>&1); then
+        echo "$status"
+    else
+        echo "FAILED"
+        error "  $status"
+        ((++errors))
+    fi
+done
+
+echo "========================"
+
+if [[ $errors -eq 0 ]]; then
+    success "All ${#adr_files[@]} ADR files have valid statuses"
+    exit 0
+else
+    error "$errors out of ${#adr_files[@]} ADR files have status issues"
+    exit 1
+fi

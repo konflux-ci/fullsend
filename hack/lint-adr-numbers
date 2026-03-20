@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# lint-adr-numbers - Check for duplicate ADR numeric identifiers
+#
+# Adapted from https://github.com/konflux-ci/architecture/blob/main/hack/lint-adr-numbers
+
+set -euo pipefail
+
+ADR_DIR="docs/ADRs"
+
+error() { echo "ERROR: $1" >&2; }
+success() { echo "OK: $1"; }
+info() { echo "INFO: $1"; }
+warning() { echo "WARNING: $1"; }
+
+adr_files=()
+while IFS= read -r -d '' file; do
+    adr_files+=("$file")
+done < <(find "$ADR_DIR" -name "*.md" -type f ! -name "0000-adr-template.md" -print0 | sort -z)
+
+if [[ ${#adr_files[@]} -eq 0 ]]; then
+    warning "No ADR markdown files found in $ADR_DIR/"
+    exit 0
+fi
+
+info "Found ${#adr_files[@]} ADR files to check"
+
+echo "Checking for duplicate ADR numbers..."
+echo "======================================"
+
+# Extract numbers from filenames, then check for duplicates
+numbers=()
+for file in "${adr_files[@]}"; do
+    filename=$(basename "$file")
+    if [[ $filename =~ ^([0-9]{4})- ]]; then
+        numbers+=("${BASH_REMATCH[1]}")
+    else
+        warning "File does not match expected naming pattern (NNNN-description.md): $filename"
+    fi
+done
+
+duplicates=$(printf '%s\n' "${numbers[@]}" | sort | uniq -d)
+
+if [[ -n "$duplicates" ]]; then
+    for dup in $duplicates; do
+        error "Duplicate ADR number $dup found"
+    done
+    echo "======================================"
+    error "Duplicate ADR numbers found. Each ADR must have a unique numeric identifier."
+    exit 1
+else
+    echo "======================================"
+    success "All ${#adr_files[@]} ADR files have unique numeric identifiers"
+    exit 0
+fi

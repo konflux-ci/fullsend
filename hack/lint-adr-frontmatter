@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pyyaml>=6.0"]
+# ///
+"""Validate frontmatter in ADR files.
+
+Checks:
+- ADR files have required frontmatter fields (title, status)
+- Status in frontmatter matches the ## Status section in the body
+- Status is a valid value
+- relates_to entries reference existing problem docs (or "*")
+- topics is a list if present
+
+Adapted from https://github.com/konflux-ci/architecture/blob/main/hack/lint-frontmatter
+"""
+
+import os
+import re
+import sys
+
+import yaml
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ADR_DIR = os.path.join(REPO_ROOT, "docs", "ADRs")
+PROBLEMS_DIR = os.path.join(REPO_ROOT, "docs", "problems")
+
+VALID_STATUSES = {"Proposed", "Undecided", "Accepted", "Deprecated", "Superseded"}
+
+
+def get_valid_problem_docs():
+    """Return set of problem doc names (without .md) that exist on disk."""
+    problems = set()
+    if not os.path.isdir(PROBLEMS_DIR):
+        return problems
+    for f in os.listdir(PROBLEMS_DIR):
+        if f.endswith(".md"):
+            problems.add(f.replace(".md", ""))
+    return problems
+
+
+def parse_frontmatter(filepath):
+    """Extract YAML frontmatter from a markdown file. Returns (dict, error)."""
+    with open(filepath, encoding="utf-8") as f:
+        content = f.read()
+
+    if not content.startswith("---\n"):
+        return None, "missing frontmatter"
+
+    end = content.find("\n---\n", 4)
+    if end == -1:
+        end = content.find("\n---\r\n", 4)
+    if end == -1:
+        return None, "missing closing frontmatter delimiter"
+
+    fm_text = content[4:end]
+    try:
+        data = yaml.safe_load(fm_text)
+    except yaml.YAMLError as e:
+        return None, f"invalid YAML: {e}"
+
+    if not isinstance(data, dict):
+        return None, "frontmatter is not a mapping"
+
+    return data, None
+
+
+def extract_status_from_body(filepath):
+    """Extract the first word of the ## Status section from the markdown body."""
+    with open(filepath, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    in_status = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "## Status":
+            in_status = True
+            continue
+        if in_status and stripped.startswith("## "):
+            break
+        if in_status and stripped:
+            clean = re.sub(r"[*_`]", "", stripped)
+            return clean.split()[0] if clean.split() else None
+    return None
+
+
+def validate_adr(filepath, valid_problems):
+    """Validate an ADR file's frontmatter. Returns list of error strings."""
+    errors = []
+    rel_path = os.path.relpath(filepath, REPO_ROOT)
+
+    fm, err = parse_frontmatter(filepath)
+    if err:
+        return [f"{rel_path}: {err}"]
+
+    # Required fields
+    for field in ["title", "status"]:
+        if field not in fm:
+            errors.append(f"{rel_path}: missing required field '{field}'")
+
+    # Status validation
+    if "status" in fm:
+        if fm["status"] not in VALID_STATUSES:
+            errors.append(
+                "{}: invalid frontmatter status '{}'. Valid: {}".format(
+                    rel_path, fm["status"], ", ".join(sorted(VALID_STATUSES))
+                )
+            )
+
+        # Check consistency with ## Status section
+        body_status = extract_status_from_body(filepath)
+        if body_status:
+            fm_norm = fm["status"].lower().strip()
+            body_norm = body_status.lower().strip()
+            if fm_norm != body_norm:
+                errors.append(
+                    "{}: frontmatter status '{}' does not match ## Status section '{}'".format(
+                        rel_path, fm["status"], body_status
+                    )
+                )
+
+    # relates_to validation
+    if "relates_to" in fm:
+        if not isinstance(fm["relates_to"], list):
+            errors.append(
+                "{}: relates_to must be a YAML list, got {}".format(
+                    rel_path, type(fm["relates_to"]).__name__
+                )
+            )
+        else:
+            for ref in fm["relates_to"]:
+                if ref != "*" and ref not in valid_problems:
+                    errors.append(
+                        f"{rel_path}: relates_to references unknown problem doc '{ref}' "
+                        "(expected a filename without .md from docs/problems/)"
+                    )
+
+    # topics validation
+    if "topics" in fm and not isinstance(fm["topics"], list):
+        errors.append(
+            "{}: topics must be a YAML list, got {}".format(rel_path, type(fm["topics"]).__name__)
+        )
+
+    return errors
+
+
+def main():
+    valid_problems = get_valid_problem_docs()
+
+    print("INFO: Validating ADR frontmatter...")
+    print(f"INFO: Found {len(valid_problems)} problem docs for cross-reference validation")
+    print()
+
+    adr_files = []
+    for f in sorted(os.listdir(ADR_DIR)):
+        if re.match(r"^\d{4}-.*\.md$", f) and not f.startswith("0000-"):
+            adr_files.append(os.path.join(ADR_DIR, f))
+
+    if not adr_files:
+        print("WARNING: No ADR files found in docs/ADRs/")
+        return 0
+
+    print("Checking ADR frontmatter...")
+    print("=" * 50)
+
+    all_errors = []
+    for filepath in adr_files:
+        filename = os.path.basename(filepath)
+        file_errors = validate_adr(filepath, valid_problems)
+        if file_errors:
+            all_errors.extend(file_errors)
+            print(f"  {filename}: FAIL")
+        else:
+            print(f"  {filename}: OK")
+
+    print("=" * 50)
+
+    if all_errors:
+        print(f"ERROR: {len(all_errors)} frontmatter validation error(s)")
+        for e in all_errors:
+            print(f"  ERROR: {e}")
+        return 1
+    else:
+        print(f"OK: All {len(adr_files)} ADR files have valid frontmatter")
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
