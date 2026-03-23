@@ -1,4 +1,4 @@
-# Downstream Contributor Priority Intake
+# Downstream/Upstream
 
 How do downstream contributors express business priorities into the Konflux open source project, and how does the project reconcile competing sources of strategic intent?
 
@@ -72,9 +72,9 @@ The project can say "no" to a downstream contributor priority that would fragmen
 - The insulating layer could become a bottleneck or a political arena
 - Requires the KGC (or a delegated body) to make judgment calls that will sometimes displease major funders
 
-### Model D: Contribution-weighted influence (historical baseline)
+### Model D: Contribution-weighted influence (current state)
 
-No formal priority mechanism. What gets built is what someone builds. Included here because it describes the default state of most open source projects — and the model that LLM-generated code is disrupting (see previous section).
+No formal priority mechanism. What gets built is what someone builds. This is the current state of Konflux and the default state of most open source projects — and the model that LLM-generated code is disrupting (see previous section).
 
 **Strengths:**
 - Zero overhead
@@ -105,6 +105,12 @@ Capture is the hardest failure mode to prevent structurally because it reflects 
 
 Requiring multi-lateral consensus stalls decision-making. Most acute under Model B, where reconciliation can deadlock. Model C mitigates this by giving the KGC final authority, but at the cost of downstream contributor buy-in — a downstream contributor that gets overruled repeatedly may stop investing.
 
+### Rejection cost
+
+Saying "no" to a contribution has always been socially expensive. When someone invested weeks of effort, rejecting their PR felt like denying their worth. Cheap code doesn't eliminate this dynamic — it shifts it. The contributor behind an agent-generated PR may not have invested much time, but the rejection still stings because it's a rejection of their *idea*, not their labor. And the volume problem compounds it: a project that must say "no" ten times a week to well-implemented but unwanted contributions burns through social capital fast.
+
+This is most acute under Models A and C, where a formal body must repeatedly tell contributors — including major funders — that their priorities don't align with the project's.
+
 ### Freeloading
 
 Downstream contributors consume the project without contributing proportionally. Less existential than the other failure modes, but it corrodes contributor morale. Models B and C make contribution levels visible; Models A and D obscure them.
@@ -119,17 +125,19 @@ When agents can implement a proposed feature in hours rather than weeks, the vol
 
 The intent system's `proposed/` to `approved/` workflow assumes someone is filtering proposals. The priority intake model determines who that someone is and what criteria they use.
 
-### Agent resource authority
+### Project-operated vs. contributor-operated agents
 
-Agents consume tokens. In a multi-lateral context, token budget is a shared project resource. Who is authorized to direct agent effort?
+Not all agent work draws from a shared resource pool. The priority question looks different depending on who operates the agents.
 
-The options mirror the priority models:
+**Project-operated agents** — code review agents, CI/gating agents, backlog triage agents — run on project infrastructure and consume a shared token budget. These are scarce resources that require central management. The KGC (or a delegated body) must own the priority queue for project-operated agents because they represent project authority: what gets reviewed, what gets tested, what gets merged.
 
-- **Egalitarian** (Model A style) — anyone can assign work to agents. Simple but potentially expensive and chaotic. A downstream contributor could flood the backlog with low-value tasks that consume shared resources.
-- **Proportional** (Model D style) — token budget is allocated proportional to contribution. This reintroduces contribution-weighted influence through a different door. It also requires defining what counts as "contribution."
-- **Centrally managed** (Model C style) — the KGC controls the token budget as a project resource and allocates it according to project priorities, not downstream contributor priorities.
+**Contributor-operated agents** — implementation agents, exploratory prototyping agents, triage assistants — run on the contributor's own infrastructure with their own token budget. A downstream contributor directing their own agents to produce PRs is not consuming a shared resource. They're just submitting contributions, the same as any human contributor with an IDE.
 
-This connects directly to the backlog/priority agent described in [agent-architecture.md](agent-architecture.md), which "needs access to strategic intent to make good decisions." The priority intake model chosen here determines what that agent's input looks like and whose priorities it serves.
+This distinction reframes the problem. For contributor-operated agents, the scarce resource is not tokens — it's *reviewer attention and CI capacity*. A downstream contributor who floods the project with agent-generated PRs isn't spending the project's money, but they are spending the project's time. The priority intake question for contributor-operated agents is really a *review intake* question: how does the project manage the volume and ensure that review bandwidth is spent on contributions aligned with project priorities?
+
+The contributor ladder applies here. An agent (or its operator) that consistently produces work aligned with project priorities and architectural invariants earns trust — faster review, CI checks enabled by default, eventually reduced oversight. A new contributor's agent gets the same treatment as any new contributor: explicit approval required for CI, closer review scrutiny, slower path to merge. "Earning trust" in an agentic world may mean demonstrating that your agent understands the project's stated priorities, not just that you showed up.
+
+This connects to the backlog/priority agent described in [agent-architecture.md](agent-architecture.md), which "needs access to strategic intent to make good decisions." For project-operated agents, the priority intake model determines that agent's input directly. For contributor-operated agents, the project's role is gating — not generating — and the priority model shapes what the project is willing to review and merge.
 
 ## Relationship to other problem areas
 
@@ -146,5 +154,6 @@ This connects directly to the backlog/priority agent described in [agent-archite
 - How does this interact with the existing ADR process — are ADRs a subset of priority decisions, or a parallel track?
 - What's the minimum viable priority process for a project with one downstream contributor today that doesn't preclude multi-lateral participation later?
 - How do you detect and prevent capture when the dominant downstream contributor also employs most KGC members?
-- Should downstream contributors be able to fund agent work on their own priorities outside the shared token budget — essentially a "bring your own tokens" model? Does that undermine project coherence or enable healthy experimentation?
-- How does the priority intake model interact with the "try it" pattern from intent-representation.md? Should downstream contributors be able to direct agents to build exploratory draft PRs for their priorities without going through the full authorization process?
+- Contributor-operated agents can submit PRs freely, but what mechanisms prevent review-queue flooding? Rate limits? Required pre-approval of intent before submitting implementation?
+- How does the priority intake model interact with the "try it" pattern from intent-representation.md? Should contributor-operated agents be able to build exploratory draft PRs without going through the full authorization process?
+- What does "earning trust" look like for contributor-operated agents? Is it the operator's reputation, the agent's track record, or both?
