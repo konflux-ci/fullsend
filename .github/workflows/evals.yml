@@ -80,6 +80,7 @@ jobs:
           EVAL_MODEL_RUNNER: google-vertex/gemini-2.5-flash@default
           EVAL_MODEL_JUDGE: google-vertex/gemini-2.5-flash@default
           GOOGLE_VERTEX_LOCATION: global
+          GOOGLE_VERTEX_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
         run: make evals
 
       - name: Run evals (changed skills only)
@@ -93,6 +94,7 @@ jobs:
           EVAL_MODEL_RUNNER: google-vertex/gemini-2.5-flash@default
           EVAL_MODEL_JUDGE: google-vertex/gemini-2.5-flash@default
           GOOGLE_VERTEX_LOCATION: global
+          GOOGLE_VERTEX_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
           CHANGED_SKILLS: ${{ needs.detect-changes.outputs.skills }}
         run: |
           echo "$CHANGED_SKILLS" | jq -r '.[]' | while read -r skill; do
