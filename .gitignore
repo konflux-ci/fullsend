@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 .ruff_cache/
 .eval-workspace/
+skills/*/evals/cache/
