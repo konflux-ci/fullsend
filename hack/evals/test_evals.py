@@ -15,10 +15,14 @@ from unittest.mock import patch
 
 import yaml
 from run import (
+    AgentEmptyOutput,
+    AgentNotAvailable,
+    AgentTimeout,
     CaseResult,
     EvalCase,
     MutationResult,
     build_variants,
+    check_required_env,
     discover_skills,
     grade_output,
     load_cached_variants,
@@ -135,7 +139,7 @@ class TestCaseResult(unittest.TestCase):
 class TestLoadEvals(unittest.TestCase):
     def test_loads_filing_issues_evals(self) -> None:
         cases, threshold, models = load_evals("filing-issues")
-        assert threshold == 0.9
+        assert threshold == 0.8
         assert len(cases) == 6
         ids = [c.id for c in cases]
         assert "asks-clarifying-questions" in ids
@@ -152,7 +156,7 @@ class TestLoadEvals(unittest.TestCase):
         assert case.prompt != ""
         assert case.expected != ""
         assert case.mutations == 5
-        assert case.threshold == 0.9
+        assert case.threshold == 0.8
 
     def test_models_loaded(self) -> None:
         _cases, _threshold, models = load_evals("filing-issues")
@@ -321,14 +325,18 @@ def _mock_popen(stdout: str = "output") -> object:
 class TestRunAgent(unittest.TestCase):
     @patch("run.shutil.which", return_value=None)
     def test_claude_not_installed(self, _mock_which: object) -> None:
-        assert run_agent("claude", "hello") is None
+        with self.assertRaises(AgentNotAvailable):
+            run_agent("claude", "hello")
 
     @patch("run.shutil.which", return_value=None)
     def test_opencode_not_installed(self, _mock_which: object) -> None:
-        assert run_agent("opencode", "hello") is None
+        with self.assertRaises(AgentNotAvailable):
+            run_agent("opencode", "hello")
 
-    def test_unknown_agent(self) -> None:
-        assert run_agent("unknown-agent", "hello") is None
+    @patch("run.shutil.which", return_value="/usr/bin/unknown-agent")
+    def test_unknown_agent(self, _mock_which: object) -> None:
+        with self.assertRaises(ValueError):
+            run_agent("unknown-agent", "hello")
 
     @patch("run.subprocess.Popen")
     @patch("run.shutil.which", return_value="/usr/bin/claude")
@@ -343,9 +351,12 @@ class TestRunAgent(unittest.TestCase):
         mock_popen.assert_called_once()
         call_args = mock_popen.call_args
         cmd = call_args[0][0]
-        assert cmd == ["claude", "-p", "test prompt", "--allowedTools", "Read"]
+        assert cmd == ["claude", "-p", "--allowedTools", "Read"]
         env = call_args[1]["env"]
         assert "CLAUDECODE" not in env
+        # Prompt is passed via stdin
+        stdin_input = mock_popen.return_value.communicate.call_args[1].get("input")
+        assert stdin_input == "test prompt"
 
     @patch("run.subprocess.Popen")
     @patch("run.shutil.which", return_value="/usr/bin/claude")
@@ -358,14 +369,15 @@ class TestRunAgent(unittest.TestCase):
         mock_popen.return_value = _mock_popen()
 
         run_agent("claude", "my prompt", skill_content="# Skill instructions")
-        call_args = mock_popen.call_args
-        prompt_arg = call_args[0][0][2]  # claude -p <prompt>
-        assert prompt_arg.startswith("# Skill instructions")
-        assert "my prompt" in prompt_arg
+        # Prompt with skill content is passed via stdin, not as CLI arg
+        stdin_input = mock_popen.return_value.communicate.call_args[1].get("input")
+        assert stdin_input is not None
+        assert stdin_input.startswith("# Skill instructions")
+        assert "my prompt" in stdin_input
 
     @patch("run.subprocess.Popen")
     @patch("run.shutil.which", return_value="/usr/bin/claude")
-    def test_claude_timeout_returns_none(
+    def test_claude_timeout_raises(
         self, _mock_which: object, mock_popen: object
     ) -> None:
         import subprocess
@@ -377,8 +389,8 @@ class TestRunAgent(unittest.TestCase):
         assert isinstance(mock_popen, MagicMock)
         mock_popen.return_value = mock_proc
 
-        result = run_agent("claude", "slow prompt")
-        assert result is None
+        with self.assertRaises(AgentTimeout):
+            run_agent("claude", "slow prompt")
         mock_proc.kill.assert_called_once()
 
     @patch("run.subprocess.Popen")
@@ -428,8 +440,8 @@ class TestGradeOutput(unittest.TestCase):
         passed, evidence = grade_output("claude", "should ask questions", "it filed immediately")
         assert passed is False
 
-    @patch("run.run_agent", return_value=None)
-    def test_unavailable_agent(self, _mock: object) -> None:
+    @patch("run.run_agent", side_effect=AgentEmptyOutput("", 1))
+    def test_agent_error(self, _mock: object) -> None:
         passed, evidence = grade_output("claude", "expected", "output")
         assert passed is None
         assert "grading call failed" in evidence
@@ -691,6 +703,33 @@ class TestRunAgentModel(unittest.TestCase):
         run_agent("opencode", "prompt")
         cmd = mock_popen.call_args[0][0]
         assert "-m" not in cmd
+
+
+class TestCheckRequiredEnv(unittest.TestCase):
+    @patch.dict("os.environ", {
+        "CLAUDE_CODE_USE_VERTEX": "1",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/creds.json",
+    })
+    def test_all_vars_set_returns_no_errors(self) -> None:
+        errors = check_required_env(["claude"])
+        assert errors == []
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_missing_vars_returns_errors(self) -> None:
+        errors = check_required_env(["claude"])
+        assert len(errors) == 2
+        assert any("CLAUDE_CODE_USE_VERTEX" in e for e in errors)
+        assert any("GOOGLE_APPLICATION_CREDENTIALS" in e for e in errors)
+
+    @patch.dict("os.environ", {"CLAUDE_CODE_USE_VERTEX": "1"}, clear=True)
+    def test_partial_vars_returns_missing(self) -> None:
+        errors = check_required_env(["claude"])
+        assert len(errors) == 1
+        assert "GOOGLE_APPLICATION_CREDENTIALS" in errors[0]
+
+    def test_unknown_agent_returns_no_errors(self) -> None:
+        errors = check_required_env(["some-future-agent"])
+        assert errors == []
 
 
 if __name__ == "__main__":

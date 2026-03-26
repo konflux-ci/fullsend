@@ -26,6 +26,11 @@ SKILLS_DIR = REPO_ROOT / "skills"
 WORKSPACE_DIR = REPO_ROOT / ".eval-workspace"
 IS_TTY = sys.stdout.isatty() and not os.environ.get("CI")
 
+# Environment variables required per agent
+REQUIRED_ENV: dict[str, list[str]] = {
+    "claude": ["CLAUDE_CODE_USE_VERTEX", "GOOGLE_APPLICATION_CREDENTIALS"],
+}
+
 
 # --- Data types ---
 
@@ -106,26 +111,57 @@ def model_for_agent(agent: str, opencode_model: str) -> str:
 # --- Runner ---
 
 
+class AgentError(Exception):
+    """Base exception for agent execution failures."""
+
+
+class AgentNotAvailable(AgentError):
+    """The agent binary is not installed."""
+
+
+class AgentEmptyOutput(AgentError):
+    """The agent ran but produced no stdout."""
+
+    def __init__(self, stderr: str = "", returncode: int | None = None):
+        self.stderr = stderr
+        self.returncode = returncode
+        detail = stderr[:200] if stderr else f"exit code {returncode}"
+        super().__init__(f"agent produced no output ({detail})")
+
+
+class AgentTimeout(AgentError):
+    """The agent process exceeded the time limit."""
+
+    def __init__(self, seconds: int = 120):
+        super().__init__(f"agent timed out after {seconds}s")
+
+
 def run_agent(
     agent: str,
     prompt: str,
     skill_content: str | None = None,
     model: str | None = None,
-) -> str | None:
-    """Run prompt through an agent CLI. Returns output or None if unavailable."""
+) -> str:
+    """Run prompt through an agent CLI. Returns output.
+
+    Raises:
+        AgentNotAvailable: agent binary not found
+        AgentEmptyOutput: agent ran but produced no output
+        AgentTimeout: agent exceeded time limit
+    """
     full_prompt = f"{skill_content}\n\n---\n\n{prompt}" if skill_content else prompt
 
+    binary = agent  # agent name is the binary name for all supported agents
+    if not shutil.which(binary):
+        raise AgentNotAvailable(f"{agent} is not installed")
+
     if agent == "claude":
-        if not shutil.which("claude"):
-            return None
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        cmd = ["claude", "-p", full_prompt, "--allowedTools", "Read"]
+        cmd = ["claude", "-p", "--allowedTools", "Read"]
         if model:
             cmd.extend(["--model", model_for_agent("claude", model)])
-        return _run_subprocess(cmd, env=env)
+        return _run_subprocess(cmd, env=env, input_text=full_prompt)
     elif agent == "opencode":
-        if not shutil.which("opencode"):
-            return None
         # TODO: OpenCode lacks --allowedTools equivalent. Add sandboxing
         # config when available. For now, runs without tool restrictions.
         cmd = ["opencode", "run", "-q"]
@@ -133,29 +169,40 @@ def run_agent(
             cmd.extend(["-m", model])
         cmd.append(full_prompt)
         return _run_subprocess(cmd)
-    return None
+    raise ValueError(f"unknown agent: {agent}")
 
 
 def _run_subprocess(
-    cmd: list[str], env: dict[str, str] | None = None
-) -> str | None:
+    cmd: list[str],
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
+) -> str:
     """Run a subprocess, killing it immediately on KeyboardInterrupt."""
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE if input_text else None,
+            text=True,
+            env=env,
         )
-        stdout, _ = proc.communicate(timeout=120)
-        return stdout
-    except subprocess.TimeoutExpired:
+        stdout, stderr = proc.communicate(input=input_text, timeout=120)
+        if stdout and stdout.strip():
+            return stdout
+        raise AgentEmptyOutput(
+            stderr=stderr.strip() if stderr else "", returncode=proc.returncode
+        )
+    except subprocess.TimeoutExpired as exc:
         proc.kill()
         proc.wait()
-        return None
+        raise AgentTimeout() from exc
     except KeyboardInterrupt:
         proc.kill()
         proc.wait()
         raise
-    except FileNotFoundError:
-        return None
+    except FileNotFoundError as exc:
+        raise AgentNotAvailable(str(exc)) from exc
 
 
 # --- Mutator ---
@@ -191,13 +238,15 @@ def generate_mutations(
         else:
             print(f"    Mutating... {i + 1}/{count}")
         mutation_request = MUTATION_PROMPT.format(prompt=prompt, expected=expected)
-        output = run_agent(agent, mutation_request, model=model)
-        if output:
+        try:
+            output = run_agent(agent, mutation_request, model=model)
             parsed = parse_yaml_from_output(output)
             if parsed and "prompt" in parsed and "expected" in parsed:
                 mutations.append((parsed["prompt"], parsed["expected"]))
                 continue
-        print("  WARNING: mutation generation failed, using original", file=sys.stderr)
+            print("  WARNING: could not parse mutation output, using original", file=sys.stderr)
+        except AgentError as exc:
+            print(f"  WARNING: mutation generation failed ({exc}), using original", file=sys.stderr)
         mutations.append((prompt, expected))
     if IS_TTY:
         print(f"    Mutated {count} variants" + " " * 20)
@@ -317,9 +366,10 @@ def grade_output(
 ) -> tuple[bool | None, str]:
     """Grade agent output against expected behavior. Returns (passed, evidence)."""
     grading_request = GRADING_PROMPT.format(expected=expected, output=output)
-    response = run_agent(agent, grading_request, model=model)
-    if not response:
-        return None, "grading call failed"
+    try:
+        response = run_agent(agent, grading_request, model=model)
+    except AgentError as exc:
+        return None, f"grading call failed: {exc}"
     parsed = parse_yaml_from_output(response)
     if parsed and "pass" in parsed:
         return bool(parsed["pass"]), str(parsed.get("evidence", ""))
@@ -459,24 +509,35 @@ def run_eval_case(
         label = "original" if mut_idx == 0 else f"mutation {mut_idx}"
         if IS_TTY:
             print(f"    [{step}/{total}] {label}: running...", end="\r", flush=True)
-        output = run_agent(agent, prompt, skill_content, model=runner_model)
-        if output is None:
+        try:
+            output = run_agent(agent, prompt, skill_content, model=runner_model)
+        except AgentNotAvailable as exc:
+            evidence = str(exc)
             result.results.append(
-                MutationResult(mut_idx, prompt, expected, None, "agent not available")
+                MutationResult(mut_idx, prompt, expected, None, evidence)
             )
             status = "SKIP"
+        except AgentError as exc:
+            evidence = str(exc)
+            result.results.append(
+                MutationResult(mut_idx, prompt, expected, False, evidence)
+            )
+            status = "FAIL"
         else:
             if IS_TTY:
                 print(f"    [{step}/{total}] {label}: grading...", end="\r", flush=True)
-            passed, evidence = grade_output(agent, expected, output, model=judge_model)
+            passed, evidence = grade_output(
+                agent, expected, output, model=judge_model
+            )
             result.results.append(
                 MutationResult(mut_idx, prompt, expected, passed, evidence)
             )
             status = "PASS" if passed else ("FAIL" if passed is False else "SKIP")
         pct = int(result.pass_rate * 100) if result.total > 0 else 0
+        evidence_suffix = f"  reason: {evidence}" if evidence else ""
         line = (
             f"    [{step}/{total}] {label:<16s} {status}  "
-            f"({result.passed}/{result.total} = {pct}%)"
+            f"({result.passed}/{result.total} = {pct}%){evidence_suffix}"
         )
         if IS_TTY:
             print(f"\r{line}" + " " * 10)
@@ -601,6 +662,19 @@ def discover_skills(skill_filter: str | None = None) -> list[str]:
     return skills
 
 
+def check_required_env(available_agents: list[str]) -> list[str]:
+    """Check that required environment variables are set for available agents.
+
+    Returns a list of error messages (empty if all OK).
+    """
+    errors: list[str] = []
+    for agent in available_agents:
+        for var in REQUIRED_ENV.get(agent, []):
+            if not os.environ.get(var):
+                errors.append(f"{agent} requires {var} but it is not set")
+    return errors
+
+
 def main() -> int:
     skill_filter = sys.argv[1] if len(sys.argv) > 1 else None
     skills = discover_skills(skill_filter)
@@ -612,6 +686,12 @@ def main() -> int:
     available_agents = [a for a in agents if shutil.which(a if a == "claude" else a)]
     if not available_agents:
         print("ERROR: Neither claude nor opencode is installed.", file=sys.stderr)
+        return 1
+
+    env_errors = check_required_env(available_agents)
+    if env_errors:
+        for err in env_errors:
+            print(f"ERROR: {err}", file=sys.stderr)
         return 1
 
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
