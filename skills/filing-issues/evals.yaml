@@ -1,5 +1,5 @@
 skill_name: filing-issues
-threshold: 0.9
+threshold: 0.8
 
 # Model names use the schema from https://models.dev/model-schema.json#/$defs/Model
 models:
