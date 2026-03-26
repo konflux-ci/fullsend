@@ -170,11 +170,14 @@ class TestLoadEvals(unittest.TestCase):
         assert models.runner == "google-vertex-anthropic/claude-haiku-4-5@default"
         assert models.judge == "google-vertex-anthropic/claude-haiku-4-5@default"
 
-    @patch.dict(os.environ, {
-        "EVAL_MODEL_MUTATION": "google-vertex/gemini-2.5-flash@default",
-        "EVAL_MODEL_RUNNER": "google-vertex/gemini-2.5-pro@default",
-        "EVAL_MODEL_JUDGE": "google-vertex/gemini-2.5-flash@default",
-    })
+    @patch.dict(
+        os.environ,
+        {
+            "EVAL_MODEL_MUTATION": "google-vertex/gemini-2.5-flash@default",
+            "EVAL_MODEL_RUNNER": "google-vertex/gemini-2.5-pro@default",
+            "EVAL_MODEL_JUDGE": "google-vertex/gemini-2.5-flash@default",
+        },
+    )
     def test_env_vars_override_models(self) -> None:
         _cases, _threshold, models = load_evals("filing-issues")
         assert models.mutation == "google-vertex/gemini-2.5-flash@default"
@@ -386,9 +389,7 @@ class TestRunAgent(unittest.TestCase):
 
     @patch("run.subprocess.Popen")
     @patch("run.shutil.which", return_value="/usr/bin/claude")
-    def test_claude_timeout_raises(
-        self, _mock_which: object, mock_popen: object
-    ) -> None:
+    def test_claude_timeout_raises(self, _mock_which: object, mock_popen: object) -> None:
         import subprocess
         from unittest.mock import MagicMock
 
@@ -476,9 +477,9 @@ class TestEvalsYamlSchema(unittest.TestCase):
 
         cases, _, _models = load_evals("filing-issues")
         for c in cases:
-            assert re.match(
-                r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$", c.id
-            ), f"ID '{c.id}' is not kebab-case"
+            assert re.match(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$", c.id), (
+                f"ID '{c.id}' is not kebab-case"
+            )
 
     def test_thresholds_in_valid_range(self) -> None:
         cases, threshold, _models = load_evals("filing-issues")
@@ -672,9 +673,7 @@ class TestRunAgentModel(unittest.TestCase):
 
     @patch("run.subprocess.Popen")
     @patch("run.shutil.which", return_value="/usr/bin/claude")
-    def test_claude_no_model_flag_when_none(
-        self, _mock_which: object, mock_popen: object
-    ) -> None:
+    def test_claude_no_model_flag_when_none(self, _mock_which: object, mock_popen: object) -> None:
         from unittest.mock import MagicMock
 
         assert isinstance(mock_popen, MagicMock)
@@ -686,9 +685,7 @@ class TestRunAgentModel(unittest.TestCase):
 
     @patch("run.subprocess.Popen")
     @patch("run.shutil.which", return_value="/usr/bin/opencode")
-    def test_opencode_passes_model_flag(
-        self, _mock_which: object, mock_popen: object
-    ) -> None:
+    def test_opencode_passes_model_flag(self, _mock_which: object, mock_popen: object) -> None:
         from unittest.mock import MagicMock
 
         assert isinstance(mock_popen, MagicMock)
@@ -715,10 +712,13 @@ class TestRunAgentModel(unittest.TestCase):
 
 
 class TestCheckRequiredEnv(unittest.TestCase):
-    @patch.dict("os.environ", {
-        "CLAUDE_CODE_USE_VERTEX": "1",
-        "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/creds.json",
-    })
+    @patch.dict(
+        "os.environ",
+        {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/creds.json",
+        },
+    )
     def test_all_vars_set_returns_no_errors(self) -> None:
         errors = check_required_env(["claude"])
         assert errors == []

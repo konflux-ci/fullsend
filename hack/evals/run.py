@@ -190,9 +190,7 @@ def _run_subprocess(
         stdout, stderr = proc.communicate(input=input_text, timeout=120)
         if stdout and stdout.strip():
             return stdout
-        raise AgentEmptyOutput(
-            stderr=stderr.strip() if stderr else "", returncode=proc.returncode
-        )
+        raise AgentEmptyOutput(stderr=stderr.strip() if stderr else "", returncode=proc.returncode)
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         proc.wait()
@@ -298,17 +296,13 @@ def load_cached_variants(
             short = evals_hash[:12]
             cached_short = str(hashes.get("evals_file", ""))[:12]
             print(
-                f"  Cache miss: evals.yaml changed "
-                f"(cached {cached_short}.. != current {short}..)"
+                f"  Cache miss: evals.yaml changed (cached {cached_short}.. != current {short}..)"
             )
             return None
         if hashes.get("skill_file") != skill_hash:
             short = skill_hash[:12]
             cached_short = str(hashes.get("skill_file", ""))[:12]
-            print(
-                f"  Cache miss: SKILL.md changed "
-                f"(cached {cached_short}.. != current {short}..)"
-            )
+            print(f"  Cache miss: SKILL.md changed (cached {cached_short}.. != current {short}..)")
             return None
         variants.append((i, data["prompt"], data["expected"]))
     return variants
@@ -468,23 +462,17 @@ def build_variants(
         return cached
 
     variants: list[tuple[int, str, str]] = [(0, case.prompt, case.expected)]
-    save_cached_variant(
-        skill_name, case.id, 0, case.prompt, case.expected, evals_hash, skill_hash
-    )
+    save_cached_variant(skill_name, case.id, 0, case.prompt, case.expected, evals_hash, skill_hash)
 
     if case.mutations > 0:
-        mutation_agent = (
-            "opencode" if "opencode" in available_agents else available_agents[0]
-        )
+        mutation_agent = "opencode" if "opencode" in available_agents else available_agents[0]
         print(f"  Generating {case.mutations} mutations via {mutation_agent}...")
         mutations = generate_mutations(
             case.prompt, case.expected, case.mutations, mutation_agent, model=model
         )
         for i, (p, e) in enumerate(mutations, start=1):
             variants.append((i, p, e))
-            save_cached_variant(
-                skill_name, case.id, i, p, e, evals_hash, skill_hash
-            )
+            save_cached_variant(skill_name, case.id, i, p, e, evals_hash, skill_hash)
 
     return variants
 
@@ -511,25 +499,17 @@ def run_eval_case(
             output = run_agent(agent, prompt, skill_content, model=runner_model)
         except AgentNotAvailable as exc:
             evidence = str(exc)
-            result.results.append(
-                MutationResult(mut_idx, prompt, expected, None, evidence)
-            )
+            result.results.append(MutationResult(mut_idx, prompt, expected, None, evidence))
             status = "SKIP"
         except AgentError as exc:
             evidence = str(exc)
-            result.results.append(
-                MutationResult(mut_idx, prompt, expected, False, evidence)
-            )
+            result.results.append(MutationResult(mut_idx, prompt, expected, False, evidence))
             status = "FAIL"
         else:
             if IS_TTY:
                 print(f"    [{step}/{total}] {label}: grading...", end="\r", flush=True)
-            passed, evidence = grade_output(
-                agent, expected, output, model=judge_model
-            )
-            result.results.append(
-                MutationResult(mut_idx, prompt, expected, passed, evidence)
-            )
+            passed, evidence = grade_output(agent, expected, output, model=judge_model)
+            result.results.append(MutationResult(mut_idx, prompt, expected, passed, evidence))
             status = "PASS" if passed else ("FAIL" if passed is False else "SKIP")
         pct = int(result.pass_rate * 100) if result.total > 0 else 0
         evidence_suffix = f"  reason: {evidence}" if evidence else ""
@@ -624,11 +604,15 @@ def print_report(
             all_pass = False
         print()
 
-    passing = [c for c in cases if all(
-        all_results.get(c.id, {}).get(a, {}).get("with_skill", None) is None
-        or all_results[c.id][a]["with_skill"].pass_rate >= c.threshold
-        for a in agents
-    )]
+    passing = [
+        c
+        for c in cases
+        if all(
+            all_results.get(c.id, {}).get(a, {}).get("with_skill", None) is None
+            or all_results[c.id][a]["with_skill"].pass_rate >= c.threshold
+            for a in agents
+        )
+    ]
     print("  Summary:")
     print(f"    Total cases:    {len(cases)}")
     print(f"    Cases passing:  {len(passing)} ({', '.join(c.id for c in passing) or 'none'})")
@@ -721,8 +705,12 @@ def main() -> int:
 
             mutation_model = (models.mutation or None) if models else None
             variants = build_variants(
-                skill_name, case, available_agents,
-                evals_hash, skill_hash, model=mutation_model,
+                skill_name,
+                case,
+                available_agents,
+                evals_hash,
+                skill_hash,
+                model=mutation_model,
             )
 
             for agent in agents:
@@ -734,9 +722,7 @@ def main() -> int:
                 for config in ["with_skill", "without_skill"]:
                     sc = skill_content if config == "with_skill" else None
                     print(f"  [{agent}] {config}:")
-                    result = run_eval_case(
-                        case, agent, sc, config, variants, models
-                    )
+                    result = run_eval_case(case, agent, sc, config, variants, models)
                     all_results[case.id][agent][config] = result
                     save_grading_yaml(result, case.threshold, output_dir)
 
