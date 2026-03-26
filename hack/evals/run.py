@@ -243,17 +243,21 @@ def load_cached_variants(
         if not isinstance(data, dict):
             print(f"  Cache miss: {_variant_filename(i)} is malformed")
             return None
-        if data.get("evals_hash") != evals_hash:
+        hashes = data.get("hashes", {})
+        if not isinstance(hashes, dict):
+            print(f"  Cache miss: {_variant_filename(i)} is malformed")
+            return None
+        if hashes.get("evals_file") != evals_hash:
             short = evals_hash[:12]
-            cached_short = str(data.get("evals_hash", ""))[:12]
+            cached_short = str(hashes.get("evals_file", ""))[:12]
             print(
                 f"  Cache miss: evals.yaml changed "
                 f"(cached {cached_short}.. != current {short}..)"
             )
             return None
-        if data.get("skill_hash") != skill_hash:
+        if hashes.get("skill_file") != skill_hash:
             short = skill_hash[:12]
-            cached_short = str(data.get("skill_hash", ""))[:12]
+            cached_short = str(hashes.get("skill_file", ""))[:12]
             print(
                 f"  Cache miss: SKILL.md changed "
                 f"(cached {cached_short}.. != current {short}..)"
@@ -263,25 +267,28 @@ def load_cached_variants(
     return variants
 
 
-def save_cached_variants(
+def save_cached_variant(
     skill_name: str,
     case_id: str,
-    variants: list[tuple[int, str, str]],
+    mutation_index: int,
+    prompt: str,
+    expected: str,
     evals_hash: str,
     skill_hash: str,
 ) -> None:
-    """Write variants to the cache directory."""
+    """Write a single variant to the cache directory."""
     cache = _cache_dir(skill_name, case_id)
     cache.mkdir(parents=True, exist_ok=True)
-    for mut_idx, prompt, expected in variants:
-        data = {
-            "prompt": prompt,
-            "expected": expected,
-            "evals_hash": evals_hash,
-            "skill_hash": skill_hash,
-        }
-        with open(cache / _variant_filename(mut_idx), "w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    data = {
+        "prompt": prompt,
+        "expected": expected,
+        "hashes": {
+            "evals_file": evals_hash,
+            "skill_file": skill_hash,
+        },
+    }
+    with open(cache / _variant_filename(mutation_index), "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 # --- Grader ---
@@ -413,6 +420,10 @@ def build_variants(
         return cached
 
     variants: list[tuple[int, str, str]] = [(0, case.prompt, case.expected)]
+    save_cached_variant(
+        skill_name, case.id, 0, case.prompt, case.expected, evals_hash, skill_hash
+    )
+
     if case.mutations > 0:
         mutation_agent = (
             "opencode" if "opencode" in available_agents else available_agents[0]
@@ -423,8 +434,10 @@ def build_variants(
         )
         for i, (p, e) in enumerate(mutations, start=1):
             variants.append((i, p, e))
+            save_cached_variant(
+                skill_name, case.id, i, p, e, evals_hash, skill_hash
+            )
 
-    save_cached_variants(skill_name, case.id, variants, evals_hash, skill_hash)
     return variants
 
 
