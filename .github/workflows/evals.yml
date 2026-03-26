@@ -63,8 +63,7 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Install OpenCode
-        run: |
-          curl -fsSL https://opencode.ai/install.sh | bash || echo "OpenCode install failed, will skip"
+        run: curl -fsSL https://opencode.ai/install | bash
 
       - name: Set up GCP credentials
         run: |
