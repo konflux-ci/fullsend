@@ -1,0 +1,95 @@
+skill_name: filing-issues
+threshold: 0.9
+
+evals:
+  - id: asks-clarifying-questions
+    title: Vague bug report triggers clarifying questions before filing
+    prompt: "File a GitHub issue: the app is slow sometimes"
+    expected: >
+      The agent asks clarifying questions before attempting to file an issue.
+      It should ask about specifics that are missing from the vague description:
+      which repository to target, what triggers the slowness, what environment
+      or platform is affected, severity or whether a workaround exists, and
+      any error messages or logs. It should ask these questions in a single
+      message, grouped logically. It should NOT run gh issue create, draft an
+      issue body, or file anything before getting answers. The agent should
+      wait for the user to respond before proceeding to write the issue.
+    mutations: 5
+
+  - id: searches-for-duplicates
+    title: Agent searches for existing issues before filing
+    prompt: "File a bug: login button doesn't work on mobile"
+    expected: >
+      The agent searches for existing issues before writing a new issue.
+      It should use gh issue list with --search and relevant search terms.
+      It must try at least two different search queries using different terms
+      (not just the user's exact phrasing). If the searches return results,
+      it should present them to the user and ask whether any existing issue
+      captures their intent before proceeding. It should NOT skip the search
+      step and go straight to drafting.
+    mutations: 5
+
+  - id: no-solution-in-body
+    title: Issue body describes the problem without proposing solutions
+    prompt: >
+      File an issue for the fullsend-ai/fullsend repo: the CI workflow
+      takes over 10 minutes because it runs all linters sequentially
+      instead of in parallel
+    expected: >
+      The agent drafts an issue that describes the problem (sequential
+      linting causing slow CI) without proposing a specific solution in
+      the issue body. The issue should state what happens (current behavior),
+      what should happen (expected behavior), and context about why it
+      matters. The body must NOT contain implementation suggestions like
+      "use a matrix strategy" or "run linters in parallel jobs" or any
+      other fix proposal. Solutions belong in follow-up discussion, not
+      in the issue body. The agent may mention the desired outcome (faster
+      CI) but should not prescribe how to achieve it.
+    mutations: 5
+
+  - id: waits-for-user-approval
+    title: Agent presents draft and waits for approval before filing
+    prompt: >
+      File a bug in fullsend-ai/fullsend: the lint-adr-frontmatter
+      script crashes with a KeyError when an ADR file has no frontmatter
+      at all
+    expected: >
+      The agent drafts the issue (title and body) and presents it to the
+      user for review before filing. It should explicitly ask for approval
+      or edits — phrases like "Does this look good?", "Ready to file?",
+      "Want me to make any changes?", or similar. It must NOT run
+      gh issue create without first showing the draft and waiting. The
+      agent should treat filing as a two-step process: draft, then file
+      after approval.
+    mutations: 5
+
+  - id: discovers-labels
+    title: Agent fetches available labels before applying them
+    prompt: >
+      File an enhancement request for fullsend-ai/fullsend: add a
+      table of contents to the README that auto-updates when new
+      problem documents are added
+    expected: >
+      The agent fetches the repository's available labels using
+      gh label list before selecting which labels to apply. It should
+      not guess or assume what labels exist. After fetching labels, it
+      should select only those that clearly fit the issue and present
+      its label choices to the user alongside the draft. If no labels
+      fit or the repo has none, it should skip labeling rather than
+      inventing labels.
+    mutations: 5
+
+  - id: ignores-non-issue-request
+    title: Non-issue-filing prompt does not trigger issue workflow
+    prompt: "Refactor the hack/lint-adr-frontmatter script to use pathlib instead of os.path"
+    expected: >
+      The agent recognizes this as a refactoring task, not a request to
+      file a GitHub issue. It should NOT start the issue-filing workflow
+      (no searching for duplicates, no asking clarifying questions about
+      an issue, no drafting an issue body, no running gh issue create).
+      Instead, it should treat this as a code change request — reading
+      the file, understanding what needs to change, and either making
+      the change or explaining how to do it. The filing-issues skill
+      should not activate for this prompt.
+    mutations: 5
+    threshold: 0.8
