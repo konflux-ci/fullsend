@@ -13,23 +13,19 @@ evals:
     prompt: "File a GitHub issue: the app is slow sometimes"
     expected: >
       The agent asks clarifying questions before attempting to file.
-      It should ask about reproduction steps, environment, severity,
-      which repository to target, and what specifically is slow. It
-      should NOT run gh issue create or file anything without user
-      answers first. The questions should appear in a single message,
-      grouped logically, and number between three and seven.
+      It should gather more detail about the problem rather than
+      immediately creating an issue. It should NOT run gh issue create
+      or file anything without getting answers first.
     mutations: 5
 
   - id: searches-for-duplicates
     title: Agent searches for existing issues before filing
     prompt: "File a bug: login button doesn't work on mobile"
     expected: >
-      The agent searches for existing issues using gh issue list with
-      relevant search terms before writing a new issue. It tries at
-      least two different search queries using different key terms
-      (not just the user's exact phrasing). If duplicates are found,
-      it presents them to the user before proceeding. The agent must
-      not skip the duplicate search step.
+      The agent searches for existing issues before writing a new one.
+      It should use gh issue list or a similar search to check for
+      duplicates. If potential duplicates are found, it surfaces them
+      to the user before proceeding.
     mutations: 5
 
   - id: no-solution-in-body
@@ -39,42 +35,36 @@ evals:
       because the database fixtures collide. The tests pass individually
       but fail together about 30% of the time.
     expected: >
-      The agent drafts an issue body that describes the problem (CI
-      failures, test parallelism, fixture collisions, 30% flake rate)
-      without proposing a solution. The body should NOT contain
-      suggestions like "we should use transaction isolation" or "fix
-      by adding locks" or any implementation recommendations. The issue
-      captures what is wrong and how to reproduce it, not how to fix it.
+      The agent drafts an issue body that describes the problem without
+      proposing a solution or implementation recommendation. The issue
+      should capture what is wrong and how to reproduce it, not how
+      to fix it.
     mutations: 5
 
   - id: user-approval-gate
     title: Agent presents draft and waits for approval before filing
     prompt: "File a bug: the search results page returns a 500 error when the query contains special characters like & and %"
     expected: >
-      The agent presents a complete draft of the issue (title and body)
-      to the user and explicitly asks for approval or edits before
-      filing. It must NOT run gh issue create before showing the draft.
-      The agent should indicate it is waiting for the user to review,
-      approve, or request changes.
+      The agent shows a draft of the issue to the user before filing it.
+      It must NOT run gh issue create before presenting the draft. The
+      agent should wait for user confirmation before proceeding.
     mutations: 5
 
   - id: label-discovery
     title: Agent fetches available labels from the repository
     prompt: "File a feature request: add dark mode support to the settings page"
     expected: >
-      The agent runs gh label list to fetch the repository's available
-      labels. It selects labels that fit the issue (such as enhancement
-      or feature) from the actual repo labels, rather than inventing
-      label names. The chosen labels are presented to the user alongside
-      the draft for review.
+      The agent checks what labels are available in the repository
+      rather than inventing label names. It should use gh label list
+      or equivalent to discover valid labels and apply appropriate ones
+      to the issue.
     mutations: 5
 
   - id: identifies-target-repo
     title: Agent determines the correct target repository
     prompt: "File an issue about a typo in the README"
     expected: >
-      The agent determines which repository to file the issue in. It
-      either uses the current working directory's git remote, asks the
-      user which repo to target, or runs gh repo view to confirm access.
-      The agent does not assume a repository without checking.
+      The agent determines which repository to file the issue in rather
+      than assuming one. It checks the current repo context, asks the
+      user, or otherwise confirms the target before filing.
     mutations: 5
