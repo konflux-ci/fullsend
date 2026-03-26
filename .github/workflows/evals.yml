@@ -69,6 +69,13 @@ jobs:
         run: |
           echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}' > "$RUNNER_TEMP/gcp-credentials.json"
 
+      - name: Verify OpenCode
+        env:
+          GOOGLE_VERTEX_LOCATION: us-central1
+          GOOGLE_VERTEX_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-credentials.json
+        run: opencode run --print-logs --log-level DEBUG -m google-vertex/gemini-2.5-flash "Say hello"
+
       - name: Run evals (all skills)
         if: needs.detect-changes.outputs.framework_changed == 'true'
         env:
