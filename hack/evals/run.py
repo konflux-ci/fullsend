@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 WORKSPACE_DIR = REPO_ROOT / ".eval-workspace"
 IS_TTY = sys.stdout.isatty() and not os.environ.get("CI")
+EVAL_PARALLEL = int(os.environ.get("EVAL_PARALLEL", "4"))
 
 # Environment variables required per agent
 REQUIRED_ENV: dict[str, list[str]] = {
@@ -160,7 +162,7 @@ def run_agent(
 
     if agent == "claude":
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        cmd = ["claude", "-p", "--allowedTools", "Read"]
+        cmd = ["claude", "-p", "--allowedTools", "Read,Bash(gh label list:*)"]
         if model:
             cmd.extend(["--model", model_for_agent("claude", model)])
         return _run_subprocess(cmd, env=env, input_text=full_prompt)
@@ -488,8 +490,22 @@ def run_eval_case(
     configuration: str,
     variants: list[tuple[int, str, str]],
     models: ModelConfig | None = None,
+    output_lines: list[str] | None = None,
 ) -> CaseResult:
-    """Run a single eval case with pre-generated variants against one agent."""
+    """Run a single eval case with pre-generated variants against one agent.
+
+    When output_lines is provided, output is appended there instead of printed
+    (used for parallel execution to avoid interleaved output).
+    """
+    buf = output_lines if output_lines is not None else None
+    is_tty = IS_TTY and buf is None
+
+    def emit(msg: str) -> None:
+        if buf is not None:
+            buf.append(msg)
+        else:
+            print(msg)
+
     result = CaseResult(eval_id=case.id, agent=agent, configuration=configuration)
     runner_model = (models.runner or None) if models else None
     judge_model = (models.judge or None) if models else None
@@ -497,7 +513,7 @@ def run_eval_case(
     total = len(variants)
     for step, (mut_idx, prompt, expected) in enumerate(variants, start=1):
         label = "original" if mut_idx == 0 else f"mutation {mut_idx}"
-        if IS_TTY:
+        if is_tty:
             print(f"    [{step}/{total}] {label}: running...", end="\r", flush=True)
         try:
             output = run_agent(agent, prompt, skill_content, model=runner_model)
@@ -510,7 +526,7 @@ def run_eval_case(
             result.results.append(MutationResult(mut_idx, prompt, expected, False, evidence))
             status = "FAIL"
         else:
-            if IS_TTY:
+            if is_tty:
                 print(f"    [{step}/{total}] {label}: grading...", end="\r", flush=True)
             passed, evidence = grade_output(agent, expected, output, model=judge_model)
             result.results.append(MutationResult(mut_idx, prompt, expected, passed, evidence))
@@ -521,10 +537,10 @@ def run_eval_case(
             f"    [{step}/{total}] {label:<16s} {status}  "
             f"({result.passed}/{result.total} = {pct}%){evidence_suffix}"
         )
-        if IS_TTY:
+        if is_tty:
             print(f"\r{line}" + " " * 10)
         else:
-            print(line)
+            emit(line)
 
     return result
 
@@ -717,16 +733,62 @@ def main() -> int:
                 model=mutation_model,
             )
 
+            # Build list of independent (agent, config) jobs
+            jobs: list[tuple[str, str, str | None]] = []
             for agent in agents:
                 if agent not in available_agents:
                     print(f"  [{agent}] skipped (not installed)")
                     continue
                 all_results[case.id].setdefault(agent, {})
-
                 for config in ["with_skill", "without_skill"]:
                     sc = skill_content if config == "with_skill" else None
+                    jobs.append((agent, config, sc))
+
+            max_workers = min(len(jobs), EVAL_PARALLEL)
+            if max_workers <= 1:
+                # Sequential: single job or parallelism disabled
+                for agent, config, sc in jobs:
                     print(f"  [{agent}] {config}:")
                     result = run_eval_case(case, agent, sc, config, variants, models)
+                    all_results[case.id][agent][config] = result
+                    save_grading_yaml(result, case.threshold, output_dir)
+            else:
+                # Parallel: run agent×config combos concurrently
+                # Bind loop variables via default args to satisfy B023
+                _case, _variants, _models = case, variants, models
+
+                def _run_job(
+                    job: tuple[str, str, str | None],
+                    _c: EvalCase = _case,
+                    _v: list[tuple[int, str, str]] = _variants,
+                    _m: ModelConfig | None = _models,
+                ) -> tuple[str, str, CaseResult, list[str]]:
+                    a, cfg, sc = job
+                    lines: list[str] = []
+                    r = run_eval_case(_c, a, sc, cfg, _v, _m, output_lines=lines)
+                    return a, cfg, r, lines
+
+                job_labels = [f"{a}/{cfg}" for a, cfg, _ in jobs]
+                print(f"  Running {len(jobs)} jobs in parallel: {', '.join(job_labels)}")
+                completed: dict[tuple[str, str], tuple[CaseResult, list[str]]] = {}
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {pool.submit(_run_job, job): job for job in jobs}
+                    for future in as_completed(futures):
+                        a, cfg, r, lines = future.result()
+                        completed[(a, cfg)] = (r, lines)
+                        pct = int(r.pass_rate * 100) if r.total > 0 else 0
+                        print(
+                            f"  Finished {a}/{cfg}: "
+                            f"{r.passed}/{r.total} passed ({pct}%) "
+                            f"[{len(completed)}/{len(jobs)} done]"
+                        )
+
+                # Print detailed results in original order
+                for agent, config, _sc in jobs:
+                    result, lines = completed[(agent, config)]
+                    print(f"  [{agent}] {config}:")
+                    for line in lines:
+                        print(line)
                     all_results[case.id][agent][config] = result
                     save_grading_yaml(result, case.threshold, output_dir)
 
