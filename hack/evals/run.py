@@ -164,7 +164,7 @@ def run_agent(
     elif agent == "opencode":
         # TODO: OpenCode lacks --allowedTools equivalent. Add sandboxing
         # config when available. For now, runs without tool restrictions.
-        cmd = ["opencode", "run", "-q"]
+        cmd = ["opencode", "run"]
         if model:
             cmd.extend(["-m", model])
         cmd.append(full_prompt)
