@@ -11,6 +11,7 @@ and mutation testing to verify skill robustness.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -203,6 +204,86 @@ def generate_mutations(
     return mutations
 
 
+# --- Mutation cache ---
+
+
+def _file_hash(path: Path) -> str:
+    """Return the SHA-256 hex digest of a file's contents."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _cache_dir(skill_name: str, case_id: str) -> Path:
+    return SKILLS_DIR / skill_name / "evals" / "cache" / case_id
+
+
+def _variant_filename(mutation_index: int) -> str:
+    return "original.yaml" if mutation_index == 0 else f"mutation-{mutation_index}.yaml"
+
+
+def load_cached_variants(
+    skill_name: str, case: EvalCase, evals_hash: str, skill_hash: str
+) -> list[tuple[int, str, str]] | None:
+    """Load cached variants if the cache is valid. Returns None on cache miss.
+
+    Prints the reason for a cache miss to stdout.
+    """
+    cache = _cache_dir(skill_name, case.id)
+    if not cache.is_dir():
+        print("  Cache miss: no cache directory")
+        return None
+    expected_count = case.mutations + 1  # original + mutations
+    variants: list[tuple[int, str, str]] = []
+    for i in range(expected_count):
+        path = cache / _variant_filename(i)
+        if not path.exists():
+            print(f"  Cache miss: {_variant_filename(i)} not found")
+            return None
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict):
+            print(f"  Cache miss: {_variant_filename(i)} is malformed")
+            return None
+        if data.get("evals_hash") != evals_hash:
+            short = evals_hash[:12]
+            cached_short = str(data.get("evals_hash", ""))[:12]
+            print(
+                f"  Cache miss: evals.yaml changed "
+                f"(cached {cached_short}.. != current {short}..)"
+            )
+            return None
+        if data.get("skill_hash") != skill_hash:
+            short = skill_hash[:12]
+            cached_short = str(data.get("skill_hash", ""))[:12]
+            print(
+                f"  Cache miss: SKILL.md changed "
+                f"(cached {cached_short}.. != current {short}..)"
+            )
+            return None
+        variants.append((i, data["prompt"], data["expected"]))
+    return variants
+
+
+def save_cached_variants(
+    skill_name: str,
+    case_id: str,
+    variants: list[tuple[int, str, str]],
+    evals_hash: str,
+    skill_hash: str,
+) -> None:
+    """Write variants to the cache directory."""
+    cache = _cache_dir(skill_name, case_id)
+    cache.mkdir(parents=True, exist_ok=True)
+    for mut_idx, prompt, expected in variants:
+        data = {
+            "prompt": prompt,
+            "expected": expected,
+            "evals_hash": evals_hash,
+            "skill_hash": skill_hash,
+        }
+        with open(cache / _variant_filename(mut_idx), "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+
 # --- Grader ---
 
 GRADING_PROMPT = """You are a strict evaluator for an AI coding agent. You are judging
@@ -314,15 +395,25 @@ def load_skill_content(skill_name: str) -> str:
 
 
 def build_variants(
-    case: EvalCase, available_agents: list[str], model: str | None = None
+    skill_name: str,
+    case: EvalCase,
+    available_agents: list[str],
+    evals_hash: str,
+    skill_hash: str,
+    model: str | None = None,
 ) -> list[tuple[int, str, str]]:
     """Generate the original + mutated variants for a case. Done once, shared by all runs.
 
+    Uses a file-based cache keyed on hashes of evals.yaml and SKILL.md.
     Prefers opencode for mutation generation, falls back to claude.
     """
+    cached = load_cached_variants(skill_name, case, evals_hash, skill_hash)
+    if cached is not None:
+        print(f"  Using {len(cached)} cached variants")
+        return cached
+
     variants: list[tuple[int, str, str]] = [(0, case.prompt, case.expected)]
     if case.mutations > 0:
-        # Prefer opencode for mutations, fall back to claude
         mutation_agent = (
             "opencode" if "opencode" in available_agents else available_agents[0]
         )
@@ -332,6 +423,8 @@ def build_variants(
         )
         for i, (p, e) in enumerate(mutations, start=1):
             variants.append((i, p, e))
+
+    save_cached_variants(skill_name, case.id, variants, evals_hash, skill_hash)
     return variants
 
 
@@ -516,6 +609,9 @@ def main() -> int:
         skill_content = load_skill_content(skill_name)
         output_dir = WORKSPACE_DIR / skill_name
 
+        evals_hash = _file_hash(SKILLS_DIR / skill_name / "evals.yaml")
+        skill_hash = _file_hash(SKILLS_DIR / skill_name / "SKILL.md")
+
         # {case_id: {agent: {config: CaseResult}}}
         all_results: dict[str, dict[str, dict[str, CaseResult]]] = {}
 
@@ -524,7 +620,10 @@ def main() -> int:
             all_results.setdefault(case.id, {})
 
             mutation_model = (models.mutation or None) if models else None
-            variants = build_variants(case, available_agents, model=mutation_model)
+            variants = build_variants(
+                skill_name, case, available_agents,
+                evals_hash, skill_hash, model=mutation_model,
+            )
 
             for agent in agents:
                 if agent not in available_agents:

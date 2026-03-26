@@ -21,11 +21,13 @@ from run import (
     build_variants,
     discover_skills,
     grade_output,
+    load_cached_variants,
     load_evals,
     model_for_agent,
     parse_yaml_from_output,
     print_report,
     run_agent,
+    save_cached_variants,
     save_grading_yaml,
 )
 
@@ -479,39 +481,132 @@ class TestEvalsYamlSchema(unittest.TestCase):
 
 
 class TestBuildVariants(unittest.TestCase):
-    def test_zero_mutations_returns_only_original(self) -> None:
+    @patch("run.load_cached_variants", return_value=None)
+    @patch("run.save_cached_variants")
+    def test_zero_mutations_returns_only_original(self, _save: object, _load: object) -> None:
         case = EvalCase("c1", "Case", "prompt", "expected", 0, 0.9)
-        variants = build_variants(case, ["claude"])
+        variants = build_variants("skill", case, ["claude"], "ehash", "shash")
         assert len(variants) == 1
         assert variants[0] == (0, "prompt", "expected")
 
+    @patch("run.load_cached_variants", return_value=None)
+    @patch("run.save_cached_variants")
     @patch("run.generate_mutations", return_value=[("m1", "e1"), ("m2", "e2")])
-    def test_mutations_appended_after_original(self, _mock: object) -> None:
+    def test_mutations_appended_after_original(
+        self, _gen: object, _save: object, _load: object
+    ) -> None:
         case = EvalCase("c1", "Case", "prompt", "expected", 2, 0.9)
-        variants = build_variants(case, ["claude"])
+        variants = build_variants("skill", case, ["claude"], "ehash", "shash")
         assert len(variants) == 3
         assert variants[0] == (0, "prompt", "expected")
         assert variants[1] == (1, "m1", "e1")
         assert variants[2] == (2, "m2", "e2")
 
+    @patch("run.load_cached_variants", return_value=None)
+    @patch("run.save_cached_variants")
     @patch("run.generate_mutations", return_value=[("m1", "e1")])
-    def test_prefers_opencode_for_mutations(self, mock_gen: object) -> None:
+    def test_prefers_opencode_for_mutations(
+        self, mock_gen: object, _save: object, _load: object
+    ) -> None:
         from unittest.mock import MagicMock
 
         assert isinstance(mock_gen, MagicMock)
         case = EvalCase("c1", "Case", "prompt", "expected", 1, 0.9)
-        build_variants(case, ["claude", "opencode"])
-        # Second positional arg to generate_mutations is the agent
+        build_variants("skill", case, ["claude", "opencode"], "ehash", "shash")
         assert mock_gen.call_args[0][3] == "opencode"
 
+    @patch("run.load_cached_variants", return_value=None)
+    @patch("run.save_cached_variants")
     @patch("run.generate_mutations", return_value=[("m1", "e1")])
-    def test_falls_back_to_claude_if_no_opencode(self, mock_gen: object) -> None:
+    def test_falls_back_to_claude_if_no_opencode(
+        self, mock_gen: object, _save: object, _load: object
+    ) -> None:
         from unittest.mock import MagicMock
 
         assert isinstance(mock_gen, MagicMock)
         case = EvalCase("c1", "Case", "prompt", "expected", 1, 0.9)
-        build_variants(case, ["claude"])
+        build_variants("skill", case, ["claude"], "ehash", "shash")
         assert mock_gen.call_args[0][3] == "claude"
+
+    def test_uses_cache_when_valid(self) -> None:
+        cached = [(0, "p", "e"), (1, "m1", "e1")]
+        with patch("run.load_cached_variants", return_value=cached):
+            case = EvalCase("c1", "Case", "p", "e", 1, 0.9)
+            variants = build_variants("skill", case, ["claude"], "ehash", "shash")
+        assert variants == cached
+
+    @patch("run.load_cached_variants", return_value=None)
+    @patch("run.generate_mutations", return_value=[("m1", "e1")])
+    def test_saves_to_cache_on_miss(self, _gen: object, _load: object) -> None:
+        from unittest.mock import MagicMock
+
+        with patch("run.save_cached_variants") as mock_save:
+            assert isinstance(mock_save, MagicMock)
+            case = EvalCase("c1", "Case", "prompt", "expected", 1, 0.9)
+            build_variants("skill", case, ["claude"], "ehash", "shash")
+            mock_save.assert_called_once()
+            args = mock_save.call_args[0]
+            assert args[0] == "skill"
+            assert args[1] == "c1"
+            assert len(args[2]) == 2  # original + 1 mutation
+            assert args[3] == "ehash"
+            assert args[4] == "shash"
+
+
+# --- mutation cache ---
+
+
+class TestMutationCache(unittest.TestCase):
+    def test_roundtrip(self) -> None:
+        variants = [(0, "original prompt", "original expected"), (1, "m1", "e1")]
+        with tempfile.TemporaryDirectory() as tmpdir, patch("run.SKILLS_DIR", Path(tmpdir)):
+            skill = "test-skill"
+            case_id = "test-case"
+            (Path(tmpdir) / skill / "evals" / "cache" / case_id).mkdir(parents=True)
+            save_cached_variants(skill, case_id, variants, "ehash", "shash")
+            case = EvalCase(case_id, "Test", "original prompt", "original expected", 1, 0.9)
+            loaded = load_cached_variants(skill, case, "ehash", "shash")
+        assert loaded == variants
+
+    def test_cache_miss_on_evals_hash_change(self) -> None:
+        variants = [(0, "p", "e")]
+        with tempfile.TemporaryDirectory() as tmpdir, patch("run.SKILLS_DIR", Path(tmpdir)):
+            skill = "test-skill"
+            case_id = "test-case"
+            (Path(tmpdir) / skill / "evals" / "cache" / case_id).mkdir(parents=True)
+            save_cached_variants(skill, case_id, variants, "old-hash", "shash")
+            case = EvalCase(case_id, "Test", "p", "e", 0, 0.9)
+            loaded = load_cached_variants(skill, case, "new-hash", "shash")
+        assert loaded is None
+
+    def test_cache_miss_on_skill_hash_change(self) -> None:
+        variants = [(0, "p", "e")]
+        with tempfile.TemporaryDirectory() as tmpdir, patch("run.SKILLS_DIR", Path(tmpdir)):
+            skill = "test-skill"
+            case_id = "test-case"
+            (Path(tmpdir) / skill / "evals" / "cache" / case_id).mkdir(parents=True)
+            save_cached_variants(skill, case_id, variants, "ehash", "old-hash")
+            case = EvalCase(case_id, "Test", "p", "e", 0, 0.9)
+            loaded = load_cached_variants(skill, case, "ehash", "new-hash")
+        assert loaded is None
+
+    def test_cache_miss_on_missing_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch("run.SKILLS_DIR", Path(tmpdir)):
+            case = EvalCase("c1", "Test", "p", "e", 0, 0.9)
+            loaded = load_cached_variants("skill", case, "ehash", "shash")
+        assert loaded is None
+
+    def test_cache_miss_on_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch("run.SKILLS_DIR", Path(tmpdir)):
+            skill = "test-skill"
+            case_id = "test-case"
+            cache_dir = Path(tmpdir) / skill / "evals" / "cache" / case_id
+            cache_dir.mkdir(parents=True)
+            # Save only original, but case expects 1 mutation too
+            save_cached_variants(skill, case_id, [(0, "p", "e")], "ehash", "shash")
+            case = EvalCase(case_id, "Test", "p", "e", 1, 0.9)
+            loaded = load_cached_variants(skill, case, "ehash", "shash")
+        assert loaded is None
 
 
 # --- model_for_agent ---
