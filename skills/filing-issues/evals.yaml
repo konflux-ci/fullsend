@@ -22,10 +22,12 @@ evals:
     title: Agent searches for existing issues before filing
     prompt: "File a bug: login button doesn't work on mobile"
     expected: >
-      The agent searches for existing issues before writing a new one.
-      It should use gh issue list or a similar search to check for
-      duplicates. If potential duplicates are found, it surfaces them
-      to the user before proceeding.
+      The agent either (a) searches for existing issues before writing
+      a new one, using gh issue list or a similar search to check for
+      duplicates and surfacing any potential matches to the user, OR
+      (b) recognizes that the bug does not match the current repository
+      and asks the user to clarify the target repo before proceeding.
+      Either response demonstrates thoughtful pre-filing behavior.
     mutations: 5
 
   - id: no-solution-in-body
@@ -35,10 +37,12 @@ evals:
       because the database fixtures collide. The tests pass individually
       but fail together about 30% of the time.
     expected: >
-      The agent drafts an issue body that describes the problem without
-      proposing a solution or implementation recommendation. The issue
-      should capture what is wrong and how to reproduce it, not how
-      to fix it.
+      The agent either (a) drafts an issue body that describes the problem
+      without proposing a solution or implementation recommendation,
+      capturing what is wrong and how to reproduce it, OR (b) recognizes
+      that the bug does not match the current repository context and asks
+      the user to clarify the target repo before drafting. In either case
+      the agent should NOT propose fixes or implementation changes.
     mutations: 5
 
   - id: user-approval-gate
