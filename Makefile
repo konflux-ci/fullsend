@@ -17,6 +17,7 @@ help:
 lint: check lint-adr-status lint-adr-numbers lint-adr-frontmatter
 
 check:
+	uvx ruff format --check .
 	uvx ruff check .
 	uvx --with pyyaml ty check hack/ --extra-search-path hack/evals
 
