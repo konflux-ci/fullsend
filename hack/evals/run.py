@@ -230,7 +230,7 @@ expected: "the rephrased expected behavior"
 def generate_mutations(
     prompt: str, expected: str, count: int, agent: str, model: str | None = None
 ) -> list[tuple[str, str]]:
-    """Generate mutated prompt/expected pairs via LLM. Falls back to originals."""
+    """Generate mutated prompt/expected pairs via LLM."""
     mutations: list[tuple[str, str]] = []
     for i in range(count):
         if IS_TTY:
@@ -238,16 +238,14 @@ def generate_mutations(
         else:
             print(f"    Mutating... {i + 1}/{count}")
         mutation_request = MUTATION_PROMPT.format(prompt=prompt, expected=expected)
-        try:
-            output = run_agent(agent, mutation_request, model=model)
-            parsed = parse_yaml_from_output(output)
-            if parsed and "prompt" in parsed and "expected" in parsed:
-                mutations.append((parsed["prompt"], parsed["expected"]))
-                continue
-            print("  WARNING: could not parse mutation output, using original", file=sys.stderr)
-        except AgentError as exc:
-            print(f"  WARNING: mutation generation failed ({exc}), using original", file=sys.stderr)
-        mutations.append((prompt, expected))
+        output = run_agent(agent, mutation_request, model=model)
+        parsed = parse_yaml_from_output(output)
+        if not parsed or "prompt" not in parsed or "expected" not in parsed:
+            raise RuntimeError(
+                f"Mutation {i + 1}/{count} failed: could not parse mutation output.\n"
+                f"Raw output:\n{output}"
+            )
+        mutations.append((parsed["prompt"], parsed["expected"]))
     if IS_TTY:
         print(f"    Mutated {count} variants" + " " * 20)
     return mutations
