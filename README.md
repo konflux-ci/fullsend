@@ -52,7 +52,7 @@ If you're applying fullsend to your own organization, consider adding your speci
 | A question, bug, or small suggestion | **File an issue** — lowest friction, can graduate later. |
 | A new problem area no existing doc covers | **Create a problem doc** in `docs/problems/` and link it here. |
 | More to say about an existing problem area | **Expand the existing problem doc.** |
-| A specific decision that needs a yes-or-no answer | **Propose an ADR** in `docs/ADRs/` ([see ADR 0001](docs/ADRs/0001-use-adrs-for-decision-making.md)). |
+| A specific decision that needs a yes-or-no answer | **Propose an ADR** in `docs/ADRs/` — even with only one option, file it as `Undecided` ([see ADR 0001](docs/ADRs/0001-use-adrs-for-decision-making.md)). |
 | Something you want to try in practice | **Log an experiment** in `experiments/`. |
 
 When in doubt, start with an issue.
