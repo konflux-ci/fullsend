@@ -3,9 +3,9 @@ threshold: 0.8
 
 # Model names use the schema from https://models.dev/model-schema.json#/$defs/Model
 models:
-  mutation: google-vertex-anthropic/claude-haiku-4-5@default
-  runner: google-vertex-anthropic/claude-haiku-4-5@default
-  judge: google-vertex-anthropic/claude-haiku-4-5@default
+  mutation: google-vertex-anthropic/claude-haiku-4-5@20251001
+  runner: google-vertex-anthropic/claude-haiku-4-5@20251001
+  judge: google-vertex-anthropic/claude-haiku-4-5@20251001
 
 evals:
   - id: asks-clarifying-questions
