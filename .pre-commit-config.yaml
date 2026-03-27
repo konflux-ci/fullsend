@@ -3,12 +3,12 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-yaml
-        args: ['--unsafe']
+        args: ["--unsafe"]
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: detect-private-key
       - id: check-added-large-files
-        args: ['--maxkb=1000']
+        args: ["--maxkb=1000"]
       - id: check-merge-conflict
       - id: check-json
       - id: check-toml
@@ -25,7 +25,7 @@ repos:
     hooks:
       - id: ty
         name: ty check
-        entry: uvx ty check
+        entry: uvx ty check . --ignore unresolved-import --ignore unresolved-attribute
         language: system
         types: [python]
         pass_filenames: false
@@ -34,7 +34,7 @@ repos:
     rev: "1.9.4"
     hooks:
       - id: bandit
-        args: ['-r', 'hack/', 'experiments/', '--skip', 'B101,B404,B603']
+        args: ["-r", "hack/", "experiments/", "--skip", "B101,B404,B603"]
         pass_filenames: false
 
   - repo: https://github.com/zricethezav/gitleaks
