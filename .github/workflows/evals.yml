@@ -80,6 +80,7 @@ jobs:
         if: needs.detect-changes.outputs.framework_changed == 'true'
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-credentials.json
           CLAUDE_CODE_USE_VERTEX: "1"
           EVAL_AGENTS: opencode
