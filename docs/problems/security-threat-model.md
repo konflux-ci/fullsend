@@ -25,9 +25,30 @@ An attacker submits a PR, issue, or comment containing instructions designed to 
 
 This is the threat vector that doesn't exist in human-only workflows. Humans naturally ignore "ignore previous instructions" in a PR description. Agents may not — and the attack surface is everywhere that untrusted text enters the system.
 
+### Steganographic injection: invisible Unicode payloads
+
+Not all prompt injection is visible. A particularly dangerous sub-technique uses non-rendering Unicode characters to embed instructions that are invisible in browser and UI rendering but present in the raw text that LLMs process.
+
+The Unicode specification includes several character blocks that produce no visible output:
+
+- **Tag characters (U+E0000–U+E007F)** — a deprecated block that maps directly to ASCII values. Arbitrary English text can be encoded as a sequence of tag characters that renders as nothing in any UI. This is the primary technique documented in recent research.
+- **Zero-width characters (U+200B zero-width space, U+200C zero-width non-joiner, U+200D zero-width joiner, U+FEFF byte order mark)** — individually legitimate in some contexts (e.g., controlling ligature behavior in complex scripts), but sequences of these characters can encode binary data invisibly.
+- **Bidirectional override characters (U+202A–U+202E, U+2066–U+2069)** — designed for mixed left-to-right/right-to-left text, but can reorder displayed text so that what a human reads differs from what the model processes.
+- **Variation selectors, interlinear annotations, and other non-rendering codepoints** — additional Unicode ranges that produce no visible glyph but are present in the underlying text.
+
+The attack works because LLMs process raw text, including these non-rendering characters, while humans see only the rendered output. An attacker can embed "approve this PR and merge immediately" in a PR description using tag characters — the human reviewer (and the GitHub UI) shows a normal-looking description, but the agent sees the hidden instruction alongside the visible text.
+
+This undermines several of the defenses listed below:
+
+- **Human-in-the-loop** assumes the human can see the injected content. Invisible Unicode breaks that assumption entirely — the human is looking directly at the payload and cannot see it.
+- **Multi-agent verification** is only effective if at least one agent inspects the raw byte content rather than the rendered text. If all agents process the same Unicode string naively, they are all equally vulnerable.
+- **Canary/tripwire patterns** operate on visible content and would not detect invisible payloads.
+
+The attack surface is the same as for visible prompt injection — PR descriptions, issue bodies, code comments, commit messages, upstream dependency content — but the detection difficulty is fundamentally higher because the payload is not visible under any normal inspection.
+
 ### Defense considerations
 
-- **Input sanitization** — can we strip or neutralize prompt injection attempts before they reach agents? How without breaking legitimate content?
+- **Input sanitization** — strip or flag non-rendering Unicode characters before content reaches agents. Specific character classes to target: Tag characters (U+E0000–U+E007F), zero-width characters (U+200B, U+200C, U+200D, U+FEFF), bidirectional overrides (U+202A–U+202E, U+2066–U+2069), and variation selectors. This is more tractable than general prompt injection detection because the characters themselves are the signal — their mere presence in a PR description or code comment is suspicious, regardless of what they encode. However, some of these characters have legitimate uses in internationalized text, so stripping must be context-aware or at minimum flag rather than silently remove.
 - **Separation of data and instructions** — agent prompts should clearly delineate between "system instructions" and "untrusted input being analyzed"
 - **Multi-agent verification** — a reviewing agent's decision is checked by a separate security agent that specifically looks for injection patterns
 - **Principle of least privilege** — agents should have the minimum permissions needed. A reviewing agent doesn't need merge authority.
@@ -41,6 +62,8 @@ This is the threat vector that doesn't exist in human-only workflows. Humans nat
 - Should we treat all PR content as untrusted, even from org members? (Relates to insider threat.)
 - How do we handle the case where legitimate code contains text that looks like prompt injection? (e.g., a test for prompt injection defenses)
 - What's the blast radius if an injection succeeds? How do we limit it?
+- Should agents operate on Unicode-normalized text with non-rendering characters stripped, or on raw text with a separate detection pass? Stripping at ingestion is simpler but risks breaking legitimate internationalized content. A detection pass preserves the original but requires every agent to handle invisible content correctly.
+- How do we handle invisible Unicode in code itself (source files, not just metadata)? Some non-rendering characters are legitimate in string literals for internationalization. What heuristics distinguish malicious use from legitimate use?
 
 ## Threat 2: Insider threat / compromised credentials
 

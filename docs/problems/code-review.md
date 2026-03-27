@@ -99,10 +99,11 @@ Specifically looks for prompt injection patterns targeting other agents in the s
 - Code comments and string literals
 - Configuration files and test data
 - Patterns that look like agent instructions embedded in code
+- **Non-rendering Unicode characters** — Tag characters (U+E0000–U+E007F), zero-width characters, bidirectional overrides, and other invisible codepoints that can encode hidden instructions. See [security-threat-model.md](security-threat-model.md#steganographic-injection-invisible-unicode-payloads) for the full threat description.
 
 This agent has a unique role: it's protecting the other review agents, not the codebase. It evaluates whether the PR content is trying to manipulate the review process itself.
 
-**Context needed:** The raw PR content (description, commit messages, diff), known injection patterns. Notably, this agent should see the *unprocessed* content, not a summary — summaries might strip out the injection attempts.
+**Context needed:** The raw PR content (description, commit messages, diff), known injection patterns. Notably, this agent should see the *unprocessed* content, not a summary — summaries might strip out the injection attempts. "Unprocessed" means raw bytes, not rendered text — the agent must be able to detect non-rendering Unicode sequences that are invisible in rendered output but present in the underlying data. This is a byte-level inspection concern, not just a text pattern matching concern.
 
 ### Style/conventions agent
 
