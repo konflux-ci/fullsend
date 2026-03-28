@@ -156,7 +156,7 @@ ADR 0002: [Building block 1](ADRs/0002-initial-fullsend-design.md#1-webhook--dis
 
 ### 2. Slash-command parser + ACL
 
-Parses `/triage`, `/code`, `/review`, and related commands and enforces who is allowed to invoke each.
+Parses `/triage`, `/implement`, `/review`, and related commands and enforces who is allowed to invoke each.
 ADR 0002: [Building block 2](ADRs/0002-initial-fullsend-design.md#2-slash-command-parser--acl).
 
 ### 3. Label state machine guard
@@ -164,7 +164,7 @@ ADR 0002: [Building block 2](ADRs/0002-initial-fullsend-design.md#2-slash-comman
 Validates legal label transitions and enforces mutual exclusion and run-start reset semantics (triage start clears **`duplicate`** and downstream labels; PR/review strips per ADR).
 ADR 0002: [Building block 3](ADRs/0002-initial-fullsend-design.md#3-label-state-machine-guard).
 
-### 4. Triage agent runtime
+### 4. triage agent runtime
 
 Runs triage from issue `title`/`body` + GitHub-native attachments only; each run starts with **`duplicate`** and other reset labels cleared; duplicate detection, readiness, reproducibility, test handoff; can close as duplicate again if still a match.
 ADR 0002: [Building block 4](ADRs/0002-initial-fullsend-design.md#4-triage-agent-runtime).
@@ -184,24 +184,24 @@ ADR 0002: [Building block 6](ADRs/0002-initial-fullsend-design.md#6-repro-sandbo
 Formats triage test artifacts in repo-native conventions for PR handoff.
 ADR 0002: [Building block 7](ADRs/0002-initial-fullsend-design.md#7-test-artifact-formatter).
 
-### 8. PR agent runtime
+### 8. implementation agent runtime
 
-Implements changes, runs local/CI-equivalent tests, handles check failures, and advances handoff to review (`ready-for-review`).
-ADR 0002: [Building block 8](ADRs/0002-initial-fullsend-design.md#8-pr-agent-runtime).
+Implements changes, runs local/CI-equivalent tests, handles check failures, and advances handoff to **Review** (`ready-for-review`).
+ADR 0002: [Building block 8](ADRs/0002-initial-fullsend-design.md#8-implementation-agent-runtime).
 
 ### 9. PR sandbox / CI mirror
 
-Execution environment for implementation and test loops, aligned to contributor/CI toolchains.
+Execution environment for **Implement** and test loops, aligned to contributor/CI toolchains.
 ADR 0002: [Building block 9](ADRs/0002-initial-fullsend-design.md#9-pr-sandbox--ci-mirror).
 
 ### 10. Check failure triage
 
-Fetches and classifies failing check logs to guide PR-agent remediation loops.
+Fetches and classifies failing check logs to guide **implementation agent** remediation loops.
 ADR 0002: [Building block 10](ADRs/0002-initial-fullsend-design.md#10-check-failure-triage).
 
-### 11. Review agent runtime
+### 11. review agent runtime
 
-Runs N parallel reviewers and produces structured review verdicts/comments.
+Runs N parallel **review agent** invocations and produces structured review verdicts/comments.
 ADR 0002: [Building block 11](ADRs/0002-initial-fullsend-design.md#11-review-agent-runtime).
 
 ### 12. Coordinator merge algorithm
@@ -209,12 +209,12 @@ ADR 0002: [Building block 11](ADRs/0002-initial-fullsend-design.md#11-review-age
 Aggregates review verdicts and applies labels:
 
 - unanimous approve-merge → `ready-for-merge` (for the **current** PR head at the end of that round only)
-- unanimous rework → `ready-for-coding`
+- unanimous rework → `ready-for-implement`
 - split/conflicting (including conflicting security severities) → `requires-manual-review`
 - each **review run start** (including push-triggered re-review) clears **`ready-for-merge`** together with **`ready-for-review`** so merge approval is never stale after new commits
 ADR 0002: [Building block 12](ADRs/0002-initial-fullsend-design.md#12-coordinator-merge-algorithm).
 
 ### 13. Observability
 
-Traceability layer across issue, triage, implementation, review, checks, and merge for incident response and correlation across automation runs.
+Traceability layer across issue, **Triage**, **Implement**, **Review**, checks, and merge for incident response and correlation across automation runs.
 ADR 0002: [Building block 13](ADRs/0002-initial-fullsend-design.md#13-observability).
