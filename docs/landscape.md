@@ -131,6 +131,16 @@ Steve Yegge's open-source multi-agent orchestration system, described as "Kubern
 
 **Relevance to fullsend:** Gas Town's use of git as crash-recovery persistence validates the "repo is the coordinator" principle — all state is in git, not in ephemeral coordinator memory. However, it uses a coordinator agent (the Mayor), which conflicts with fullsend's position that coordination should happen through branch protection, CODEOWNERS, and status checks rather than through a coordinator agent. The Refinery merge queue concept is relevant to how we'd sequence autonomous merges.
 
+## Kubernetes-native agent hosting (SIG)
+
+### Kubernetes SIG Agent Sandbox
+
+[GitHub](https://github.com/kubernetes-sigs/agent-sandbox) | [Project site](https://agent-sandbox.sigs.k8s.io)
+
+A Kubernetes SIG project: controllers and **Custom Resources** for **isolated, stateful, singleton** agent workloads (durable pod-per-session style runtimes), not ephemeral CI-shaped jobs.
+
+**Relevance to fullsend:** Useful reference for long-lived, cluster-hosted agent sessions. For task-scoped automation, the CR-centric lifecycle is a poor fit next to [Tekton](https://tekton.dev/)–style pipelines **triggered from SCM events** (pull requests, pushes, and similar), and the project does not currently ship observability primitives aligned with per-task attribution and audit needs — see [agent-infrastructure.md](problems/agent-infrastructure.md#kubernetes-sig-agent-sandbox).
+
 ## Architectural patterns in the field
 
 Three distinct approaches:

@@ -79,6 +79,19 @@ Agents are often discussed as if they run on a developer workstation: fast local
 - **Phase by phase** — Start with a 3rd party or internal option for early experiments (e.g. review agents only); decide later whether to replace or extend with custom infrastructure as autonomy expands.
 - **By agent type** — Triage and review agents might run on one platform (e.g. event-driven, short-lived); implementation agents that need more tooling and longer runs might need a different environment.
 
+## Kubernetes SIG Agent Sandbox
+
+[Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) ([project site](https://agent-sandbox.sigs.k8s.io)) is a Kubernetes SIG project for managing **isolated, stateful, singleton** workloads — a natural fit when an agent runtime should behave like one durable pod per user or session (for example a long-running interactive environment).
+
+Whether a workload is “short” or “long” in wall-clock time is not the whole story. The more useful distinction for fullsend is **what the project optimizes for** versus what we need for repo-scoped automation:
+
+- **Stateful singleton semantics** — The project centers on controller-level lifecycle and scheduling patterns aligned with **persistent, one-at-a-time** workloads, not on replacing ephemeral CI-style jobs.
+- **Isolation as a separate concern** — Strong execution isolation (for example microVM-class boundaries) is largely **deferred to complementary mechanisms** such as [Kata Containers](https://katacontainers.io/), rather than being the main deliverable of the Agent Sandbox controller itself.
+- **Pipeline composition** — The project’s **Custom Resources** and controller lifecycle are a distinct orchestration surface. That extra CR layer makes it **difficult to integrate** Agent Sandbox cleanly into workflows already expressed in [Tekton](https://tekton.dev/)–style pipelines **triggered from SCM events** (for example pull requests or pushes), where agent work would more naturally appear as short-lived `Task` runs alongside build and test steps.
+- **Observability** — The SIG project does **not** currently provide observability features that map to what we need; per-run attribution, auditability, and agent-action telemetry would still have to come from **other** stack choices.
+
+Many fullsend scenarios skew toward **ephemeral, task-scoped** execution (triage an issue, prepare a PR, run a review) where **isolation and observability** are first-class requirements for each run. That overlap in vocabulary (“sandbox”) does not guarantee overlap in requirements: Agent Sandbox is a relevant data point for organizations standardizing **long-lived, Kubernetes-hosted** agent sessions; it is less directly aimed at **event-driven, short-lived** agent jobs unless we compose it with **separate** isolation, telemetry, and pipeline integration layers.
+
 ## Relationship to other problem areas
 
 - **Agent architecture** — Instance topology (per-repo vs shared) and “local vs remote” for pre-PR review depend on what infrastructure we have. Infrastructure enables or constrains those choices.
@@ -94,3 +107,4 @@ Agents are often discussed as if they run on a developer workstation: fast local
 - How do we compare 3rd party vs internal vs build-our-own on concrete criteria: cost, time to first agent, compliance, and alignment with our security and coordination model?
 - Who in the org would own and operate agent infrastructure, and how does that align with existing platform or CI ownership?
 - For cluster-hosted agents, how do we preserve an acceptable inner loop (fast local or sandboxed tests) without granting dangerous privilege, and how do we avoid paying for idle capacity while work waits on humans?
+- For Kubernetes-hosted agents, how do upstream lifecycle controllers (for example [SIG Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox)) fit alongside ephemeral task runners, and what stack (isolation runtime, telemetry, policy) must wrap them to meet our threat model?

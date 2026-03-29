@@ -26,6 +26,8 @@ The isolation boundary around a running agent. Responsible for filesystem access
 
 The sandbox is a security primitive. Its job is containment: if an agent is compromised or misbehaves, the blast radius is limited to what the sandbox permits.
 
+Ecosystem projects reuse the word *sandbox* for different workload shapes. For example, [Kubernetes SIG Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) targets **stateful, singleton** agent runtimes (long-lived sessions), whereas many fullsend-style workflows emphasize **short-lived, task-scoped** runs with tight isolation and observability. How those patterns compare is discussed in [agent-infrastructure.md](problems/agent-infrastructure.md#kubernetes-sig-agent-sandbox).
+
 Sandbox defaults (network policy, filesystem restrictions) are configured in the org's `<org>/.fullsend` repo and can be overridden per-repo. (See [ADR 0003](ADRs/0003-org-config-repo-convention.md).)
 
 **Open questions:**
