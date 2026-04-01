@@ -62,6 +62,9 @@ type AppCredentials struct {
 type Prompter interface {
 	// WaitForEnter prints a message and blocks until the user presses Enter.
 	WaitForEnter(prompt string) error
+
+	// Confirm prints a yes/no prompt and returns true if the user answers yes.
+	Confirm(prompt string) (bool, error)
 }
 
 // BrowserOpener opens URLs in the user's browser.
@@ -114,22 +117,63 @@ func New(printer *ui.Printer, prompt Prompter, browser BrowserOpener, token stri
 func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
 	s.printer.Header("GitHub App setup")
 	s.printer.Blank()
-	s.printer.StepInfo("fullsend needs a GitHub App to operate on your organization.")
-	s.printer.StepInfo("We'll walk you through creating and installing it.")
-	s.printer.Blank()
 
-	// Step 1: Create the app via manifest flow
+	// Step 1: Check if a fullsend app already exists on this org
+	creds, err := s.resolveApp(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Check installation and handle if needed
+	if err := s.ensureInstalled(ctx, org, creds.Slug); err != nil {
+		return nil, err
+	}
+
+	s.printer.Blank()
+	return creds, nil
+}
+
+// resolveApp either finds an existing fullsend app on the org or walks
+// the user through creating one.
+func (s *Setup) resolveApp(ctx context.Context, org string) (*AppCredentials, error) {
+	s.printer.StepStart("Checking for existing fullsend app...")
+
+	existing, err := s.findExistingApp(ctx, org)
+	if err != nil {
+		// Non-fatal — we can still offer to create one
+		s.printer.StepInfo(fmt.Sprintf("Could not check for existing app: %v", err))
+	}
+
+	if existing != nil {
+		s.printer.StepDone(fmt.Sprintf("Found existing app %q installed on this organization", existing.Slug))
+		s.printer.Blank()
+
+		reuse, confirmErr := s.prompt.Confirm(fmt.Sprintf("Use existing app %q? [Y/n] ", existing.Slug))
+		if confirmErr != nil {
+			return nil, fmt.Errorf("reading confirmation: %w", confirmErr)
+		}
+
+		if reuse {
+			s.printer.StepDone(fmt.Sprintf("Using existing app %q", existing.Slug))
+			return existing, nil
+		}
+
+		s.printer.StepInfo("OK, we'll create a new app instead.")
+		s.printer.Blank()
+	}
+
+	// No existing app (or user declined) — create one
 	s.printer.StepInfo("We need you to create a GitHub App.")
 	s.printer.Blank()
 
-	if err := s.prompt.WaitForEnter("Press [Enter] to be taken to the app creation flow..."); err != nil {
-		return nil, fmt.Errorf("waiting for user: %w", err)
+	if promptErr := s.prompt.WaitForEnter("Press [Enter] to be taken to the app creation flow..."); promptErr != nil {
+		return nil, fmt.Errorf("waiting for user: %w", promptErr)
 	}
 
-	creds, err := s.createAppViaManifest(ctx, org)
-	if err != nil {
+	creds, createErr := s.createAppViaManifest(ctx, org)
+	if createErr != nil {
 		s.printer.StepFail("GitHub App creation failed")
-		return nil, fmt.Errorf("creating GitHub App: %w", err)
+		return nil, fmt.Errorf("creating GitHub App: %w", createErr)
 	}
 
 	s.printer.StepDone(fmt.Sprintf("GitHub App %q created", creds.Name))
@@ -137,17 +181,48 @@ func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
 	s.printer.StepInfo(fmt.Sprintf("Settings: %s", creds.HTMLURL))
 	s.printer.Blank()
 
-	// Step 2: Install the app on the organization
-	s.printer.StepInfo("Now we need you to install that app on your organization.")
+	return creds, nil
+}
+
+// ensureInstalled checks if the app is already installed with access to all
+// repos. If it is, skips the installation step. Otherwise, walks the user
+// through the installation flow.
+func (s *Setup) ensureInstalled(ctx context.Context, org, appSlug string) error {
+	s.printer.StepStart("Checking app installation...")
+
+	installation, err := s.getInstallation(ctx, org, appSlug)
+	if err != nil {
+		s.printer.StepInfo(fmt.Sprintf("Could not check installation: %v", err))
+		// Fall through to the manual installation flow
+	} else if installation != nil && installation.RepoSelection == "all" {
+		s.printer.StepDone("App is installed with access to all repositories")
+		return nil
+	} else if installation != nil {
+		s.printer.StepDone("App is installed (with access to selected repositories)")
+		s.printer.StepInfo("You may want to update the installation to grant access to additional repos.")
+		s.printer.Blank()
+
+		update, confirmErr := s.prompt.Confirm("Update the app installation now? [Y/n] ")
+		if confirmErr != nil {
+			return fmt.Errorf("reading confirmation: %w", confirmErr)
+		}
+		if !update {
+			return nil
+		}
+		// Fall through to the installation flow to let them update
+	}
+
+	// Not installed or user wants to update — walk through installation
+	s.printer.StepInfo("We need you to install the app on your organization.")
 	s.printer.StepInfo("This grants it access to the repos you choose.")
 	s.printer.Blank()
 
 	if promptErr := s.prompt.WaitForEnter("Press [Enter] to be taken to the app installation page..."); promptErr != nil {
-		return nil, fmt.Errorf("waiting for user: %w", promptErr)
+		return fmt.Errorf("waiting for user: %w", promptErr)
 	}
 
 	installURL := fmt.Sprintf("%s/apps/%s/installations/new",
-		s.webURL, creds.Slug)
+		s.webURL, appSlug)
 	if openErr := s.browser.Open(ctx, installURL); openErr != nil {
 		s.printer.StepWarn("Could not open browser automatically")
 		s.printer.StepInfo(fmt.Sprintf("Open this URL manually: %s", installURL))
@@ -159,26 +234,25 @@ func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
 	s.printer.Blank()
 
 	if promptErr := s.prompt.WaitForEnter("Press [Enter] when the installation is complete..."); promptErr != nil {
-		return nil, fmt.Errorf("waiting for user: %w", promptErr)
+		return fmt.Errorf("waiting for user: %w", promptErr)
 	}
 
-	// Step 3: Verify the app is installed on the org
+	// Verify
 	s.printer.StepStart("Verifying app installation...")
 
-	installed, err := s.verifyInstallation(ctx, org, creds.Slug)
-	if err != nil {
-		s.printer.StepWarn(fmt.Sprintf("Could not verify installation: %v", err))
+	verifyInst, verifyErr := s.getInstallation(ctx, org, appSlug)
+	if verifyErr != nil {
+		s.printer.StepWarn(fmt.Sprintf("Could not verify installation: %v", verifyErr))
 		s.printer.StepInfo("The app may still be installed. Continuing...")
-	} else if !installed {
+	} else if verifyInst == nil {
 		s.printer.StepWarn("App does not appear to be installed on this organization yet")
 		s.printer.StepInfo("You can install it later at:")
-		s.printer.StepInfo(fmt.Sprintf("  %s/apps/%s/installations/new", s.webURL, creds.Slug))
+		s.printer.StepInfo(fmt.Sprintf("  %s/apps/%s/installations/new", s.webURL, appSlug))
 	} else {
 		s.printer.StepDone("App is installed on the organization")
 	}
 
-	s.printer.Blank()
-	return creds, nil
+	return nil
 }
 
 // createAppViaManifest runs the manifest flow:
@@ -314,16 +388,58 @@ func (s *Setup) exchangeCode(ctx context.Context, code string) (*AppCredentials,
 	return &creds, nil
 }
 
-// verifyInstallation checks whether the app is installed on the org
-// by looking at the org's installed apps list.
-func (s *Setup) verifyInstallation(ctx context.Context, org, appSlug string) (bool, error) {
-	// List the org's app installations
+// installationInfo holds details about an app installation on an org.
+type installationInfo struct {
+	AppSlug       string `json:"app_slug"`
+	RepoSelection string `json:"repository_selection"` // "all" or "selected"
+}
+
+// findExistingApp checks the org's installed apps for one that looks like
+// a fullsend app (slug starts with "fullsend"). Returns nil if none found.
+func (s *Setup) findExistingApp(ctx context.Context, org string) (*AppCredentials, error) {
+	installations, err := s.listInstallations(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, inst := range installations {
+		if strings.HasPrefix(inst.AppSlug, "fullsend") {
+			return &AppCredentials{
+				Name:    inst.AppSlug, // Best we can get without app-level auth
+				Slug:    inst.AppSlug,
+				HTMLURL: fmt.Sprintf("%s/apps/%s", s.webURL, inst.AppSlug),
+			}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// getInstallation returns installation details for a specific app on the org,
+// or nil if the app is not installed.
+func (s *Setup) getInstallation(ctx context.Context, org, appSlug string) (*installationInfo, error) {
+	installations, err := s.listInstallations(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range installations {
+		if installations[i].AppSlug == appSlug {
+			return &installations[i], nil
+		}
+	}
+
+	return nil, nil
+}
+
+// listInstallations fetches all app installations for the org.
+func (s *Setup) listInstallations(ctx context.Context, org string) ([]installationInfo, error) {
 	reqURL := fmt.Sprintf("%s/orgs/%s/installations?per_page=100",
 		s.baseURL, url.PathEscape(org))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+s.token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -331,36 +447,28 @@ func (s *Setup) verifyInstallation(ctx context.Context, org, appSlug string) (bo
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("listing installations (HTTP %d): %s",
+		return nil, fmt.Errorf("listing installations (HTTP %d): %s",
 			resp.StatusCode, string(body))
 	}
 
 	var result struct {
-		Installations []struct {
-			AppSlug string `json:"app_slug"`
-		} `json:"installations"`
+		Installations []installationInfo `json:"installations"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return false, fmt.Errorf("decoding installations: %w", err)
+		return nil, fmt.Errorf("decoding installations: %w", err)
 	}
 
-	for _, inst := range result.Installations {
-		if inst.AppSlug == appSlug {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return result.Installations, nil
 }
 
 // buildManifest constructs the GitHub App manifest with the right permissions.
@@ -474,4 +582,17 @@ func (StdinPrompter) WaitForEnter(prompt string) error {
 	reader := bufio.NewReader(os.Stdin)
 	_, err := reader.ReadString('\n')
 	return err
+}
+
+// Confirm prints a yes/no prompt and returns true for yes (or empty/Enter,
+// which defaults to yes).
+func (StdinPrompter) Confirm(prompt string) (bool, error) {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
+	answer := strings.TrimSpace(strings.ToLower(line))
+	return answer == "" || answer == "y" || answer == "yes", nil
 }

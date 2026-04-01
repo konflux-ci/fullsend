@@ -16,12 +16,24 @@ import (
 
 // fakePrompter records prompts and immediately returns.
 type fakePrompter struct {
-	prompts []string
+	prompts        []string
+	confirmAnswers []bool // answers to return from successive Confirm calls
+	confirmIdx     int
 }
 
 func (f *fakePrompter) WaitForEnter(prompt string) error {
 	f.prompts = append(f.prompts, prompt)
 	return nil
+}
+
+func (f *fakePrompter) Confirm(prompt string) (bool, error) {
+	f.prompts = append(f.prompts, prompt)
+	if f.confirmIdx < len(f.confirmAnswers) {
+		answer := f.confirmAnswers[f.confirmIdx]
+		f.confirmIdx++
+		return answer, nil
+	}
+	return true, nil // default yes
 }
 
 // fakeBrowser records opened URLs and optionally visits them.
@@ -125,7 +137,7 @@ func TestExchangeCode_APIError(t *testing.T) {
 	assert.Contains(t, err.Error(), "404")
 }
 
-func TestVerifyInstallation_Found(t *testing.T) {
+func TestGetInstallation_Found(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/orgs/my-org/installations")
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
@@ -133,8 +145,8 @@ func TestVerifyInstallation_Found(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"installations": []map[string]any{
-				{"app_slug": "other-app"},
-				{"app_slug": "fullsend-my-org"},
+				{"app_slug": "other-app", "repository_selection": "all"},
+				{"app_slug": "fullsend-my-org", "repository_selection": "selected"},
 			},
 		})
 	}))
@@ -142,17 +154,19 @@ func TestVerifyInstallation_Found(t *testing.T) {
 
 	s, _, _, _ := newTestSetup(t, srv, nil)
 
-	found, err := s.verifyInstallation(context.Background(), "my-org", "fullsend-my-org")
+	inst, err := s.getInstallation(context.Background(), "my-org", "fullsend-my-org")
 	require.NoError(t, err)
-	assert.True(t, found)
+	require.NotNil(t, inst)
+	assert.Equal(t, "fullsend-my-org", inst.AppSlug)
+	assert.Equal(t, "selected", inst.RepoSelection)
 }
 
-func TestVerifyInstallation_NotFound(t *testing.T) {
+func TestGetInstallation_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"installations": []map[string]any{
-				{"app_slug": "other-app"},
+				{"app_slug": "other-app", "repository_selection": "all"},
 			},
 		})
 	}))
@@ -160,12 +174,12 @@ func TestVerifyInstallation_NotFound(t *testing.T) {
 
 	s, _, _, _ := newTestSetup(t, srv, nil)
 
-	found, err := s.verifyInstallation(context.Background(), "my-org", "fullsend-my-org")
+	inst, err := s.getInstallation(context.Background(), "my-org", "fullsend-my-org")
 	require.NoError(t, err)
-	assert.False(t, found)
+	assert.Nil(t, inst)
 }
 
-func TestVerifyInstallation_APIError(t *testing.T) {
+func TestGetInstallation_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"message":"Forbidden"}`)
@@ -174,9 +188,47 @@ func TestVerifyInstallation_APIError(t *testing.T) {
 
 	s, _, _, _ := newTestSetup(t, srv, nil)
 
-	_, err := s.verifyInstallation(context.Background(), "my-org", "fullsend-my-org")
+	_, err := s.getInstallation(context.Background(), "my-org", "fullsend-my-org")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "403")
+}
+
+func TestFindExistingApp_Found(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"installations": []map[string]any{
+				{"app_slug": "other-app", "repository_selection": "all"},
+				{"app_slug": "fullsend-my-org", "repository_selection": "selected"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s, _, _, _ := newTestSetup(t, srv, nil)
+
+	creds, err := s.findExistingApp(context.Background(), "my-org")
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	assert.Equal(t, "fullsend-my-org", creds.Slug)
+}
+
+func TestFindExistingApp_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"installations": []map[string]any{
+				{"app_slug": "other-app", "repository_selection": "all"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s, _, _, _ := newTestSetup(t, srv, nil)
+
+	creds, err := s.findExistingApp(context.Background(), "my-org")
+	require.NoError(t, err)
+	assert.Nil(t, creds)
 }
 
 func TestFormPage(t *testing.T) {
