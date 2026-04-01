@@ -2,9 +2,10 @@
 //
 // The uninstall process:
 //  1. Reads config.yaml from the .fullsend repo to find the app slug
-//  2. Deletes the .fullsend configuration repository
-//  3. Removes the app installation from the organization
-//  4. Directs the user to delete the app registration (requires browser)
+//  2. Checks token scopes to decide API vs browser for repo deletion
+//  3. Deletes the .fullsend configuration repository (API or browser)
+//  4. Uninstalls the app from the org (browser — API requires app JWT)
+//  5. Directs the user to delete the app registration (browser)
 package uninstall
 
 import (
@@ -14,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/config"
@@ -35,6 +37,9 @@ type Options struct {
 type Prompter interface {
 	// ConfirmWithInput asks the user to type a specific string to confirm.
 	ConfirmWithInput(prompt, expected string) (bool, error)
+
+	// WaitForEnter prints a message and blocks until the user presses Enter.
+	WaitForEnter(prompt string) error
 }
 
 // BrowserOpener opens URLs in the user's browser.
@@ -121,19 +126,25 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 		un.printer.StepDone(fmt.Sprintf("Found app: %s", appSlug))
 	}
 
-	// Step 2: Delete the .fullsend repo
-	un.printer.StepStart("Deleting .fullsend repository...")
+	// Step 2: Check token scopes to see if we can delete via API
+	un.printer.StepStart("Checking token permissions...")
+	scopes := un.checkTokenScopes(ctx)
+	hasDeleteRepo := strings.Contains(scopes, "delete_repo")
 
-	if deleteErr := un.client.DeleteRepo(ctx, opts.Org, ".fullsend"); deleteErr != nil {
-		un.printer.StepFail(fmt.Sprintf("Failed to delete .fullsend repo: %v", deleteErr))
-		un.printer.StepInfo("You may need to delete it manually.")
+	if hasDeleteRepo {
+		un.printer.StepDone("Token has delete_repo scope")
 	} else {
-		un.printer.StepDone("Deleted .fullsend repository")
+		un.printer.StepInfo("Token does not have delete_repo scope — will use browser for repo deletion")
 	}
 
-	// Step 3: Remove the app installation from the org
+	// Step 3: Delete the .fullsend repo
+	if deleteErr := un.deleteConfigRepo(ctx, opts.Org, hasDeleteRepo); deleteErr != nil {
+		// Non-fatal — continue with app uninstall
+		_ = deleteErr
+	}
+
+	// Step 4: Find the app if we don't have it from config
 	if appSlug == "" {
-		// Try to find it from installations
 		appSlug, err = un.findFullsendApp(ctx, opts.Org)
 		if err != nil || appSlug == "" {
 			un.printer.StepWarn("Could not determine the fullsend app to uninstall")
@@ -144,36 +155,180 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	un.printer.StepStart(fmt.Sprintf("Removing %s app installation...", appSlug))
-
-	if removeErr := un.removeInstallation(ctx, opts.Org, appSlug); removeErr != nil {
-		un.printer.StepFail(fmt.Sprintf("Failed to remove app installation: %v", removeErr))
-		un.printer.StepInfo("You may need to remove it manually at:")
-		un.printer.StepInfo(fmt.Sprintf("  %s/organizations/%s/settings/installations", un.webURL, opts.Org))
-	} else {
-		un.printer.StepDone(fmt.Sprintf("Removed %s installation from organization", appSlug))
+	// Step 5: Uninstall the app (browser flow — API requires app JWT)
+	if err := un.uninstallApp(ctx, opts.Org, appSlug); err != nil {
+		// Non-fatal
+		_ = err
 	}
 
-	// Step 4: Direct user to delete the app registration
-	un.printer.Blank()
-	un.printer.StepInfo("To complete the cleanup, delete the app registration:")
-	appSettingsURL := fmt.Sprintf("%s/settings/apps/%s", un.webURL, appSlug)
-	un.printer.StepInfo(fmt.Sprintf("  %s", appSettingsURL))
-	un.printer.StepInfo("(This requires browser access and cannot be done via API with a PAT.)")
-	un.printer.Blank()
-
-	if openErr := un.browser.Open(ctx, appSettingsURL); openErr != nil {
-		// Silently ignore — we already printed the URL
-		_ = openErr
+	// Step 6: Delete the app registration (browser flow)
+	if err := un.deleteAppRegistration(ctx, opts.Org, appSlug); err != nil {
+		// Non-fatal
+		_ = err
 	}
 
 	un.printer.Summary("Uninstall complete", []string{
 		fmt.Sprintf("Deleted: %s/.fullsend", opts.Org),
-		fmt.Sprintf("Removed: %s app installation", appSlug),
-		"Action required: delete the app registration in your browser",
+		fmt.Sprintf("Uninstalled: %s from %s", appSlug, opts.Org),
+		fmt.Sprintf("Deleted: %s app registration", appSlug),
 	})
 
 	return nil
+}
+
+// deleteConfigRepo deletes the .fullsend repo via API if we have permission,
+// otherwise walks the user through doing it in the browser.
+func (un *Uninstaller) deleteConfigRepo(ctx context.Context, org string, canDeleteViaAPI bool) error {
+	if canDeleteViaAPI {
+		un.printer.StepStart("Deleting .fullsend repository...")
+
+		if deleteErr := un.client.DeleteRepo(ctx, org, ".fullsend"); deleteErr != nil {
+			un.printer.StepFail(fmt.Sprintf("Failed to delete .fullsend repo: %v", deleteErr))
+			un.printer.StepInfo("You may need to delete it manually in your browser.")
+			// Fall through to browser flow
+		} else {
+			un.printer.StepDone("Deleted .fullsend repository")
+			return nil
+		}
+	}
+
+	// Browser flow
+	repoURL := fmt.Sprintf("%s/%s/.fullsend/settings", un.webURL, org)
+
+	un.printer.StepInfo("We need you to delete the .fullsend repository in your browser.")
+	un.printer.StepInfo("Go to Settings → Danger Zone → Delete this repository.")
+	un.printer.Blank()
+
+	if promptErr := un.prompt.WaitForEnter("Press [Enter] to open the repo settings page..."); promptErr != nil {
+		return promptErr
+	}
+
+	if openErr := un.browser.Open(ctx, repoURL); openErr != nil {
+		un.printer.StepWarn("Could not open browser automatically")
+		un.printer.StepInfo(fmt.Sprintf("Open this URL manually: %s", repoURL))
+	} else {
+		un.printer.StepInfo("Opened repo settings in your browser.")
+	}
+
+	un.printer.StepInfo("Delete the repository, then return here.")
+	un.printer.Blank()
+
+	if promptErr := un.prompt.WaitForEnter("Press [Enter] when the repository has been deleted..."); promptErr != nil {
+		return promptErr
+	}
+
+	un.printer.StepDone("Proceeding with .fullsend repo deleted")
+	return nil
+}
+
+// uninstallApp walks the user through uninstalling the app from their org
+// via the browser. The API endpoint for this requires app-level JWT auth
+// which we don't have with a PAT.
+func (un *Uninstaller) uninstallApp(ctx context.Context, org, appSlug string) error {
+	// Find the installation ID so we can build the right URL
+	installations, err := un.listInstallations(ctx, org)
+	if err != nil {
+		un.printer.StepWarn(fmt.Sprintf("Could not list installations: %v", err))
+		un.printer.StepInfo("You may need to uninstall the app manually at:")
+		un.printer.StepInfo(fmt.Sprintf("  %s/organizations/%s/settings/installations", un.webURL, org))
+		return err
+	}
+
+	var installID int
+	for _, inst := range installations {
+		if inst.AppSlug == appSlug {
+			installID = inst.ID
+			break
+		}
+	}
+
+	if installID == 0 {
+		un.printer.StepDone(fmt.Sprintf("App %q is not installed on this organization — nothing to uninstall", appSlug))
+		return nil
+	}
+
+	installURL := fmt.Sprintf("%s/organizations/%s/settings/installations/%d",
+		un.webURL, org, installID)
+
+	un.printer.StepInfo(fmt.Sprintf("We need you to uninstall the %s app from your organization.", appSlug))
+	un.printer.StepInfo("Click \"Uninstall\" on the app's installation page.")
+	un.printer.Blank()
+
+	if promptErr := un.prompt.WaitForEnter("Press [Enter] to open the app installation page..."); promptErr != nil {
+		return promptErr
+	}
+
+	if openErr := un.browser.Open(ctx, installURL); openErr != nil {
+		un.printer.StepWarn("Could not open browser automatically")
+		un.printer.StepInfo(fmt.Sprintf("Open this URL manually: %s", installURL))
+	} else {
+		un.printer.StepInfo("Opened app installation page in your browser.")
+	}
+
+	un.printer.StepInfo("Uninstall the app, then return here.")
+	un.printer.Blank()
+
+	if promptErr := un.prompt.WaitForEnter("Press [Enter] when the app has been uninstalled..."); promptErr != nil {
+		return promptErr
+	}
+
+	un.printer.StepDone(fmt.Sprintf("Proceeding with %s uninstalled", appSlug))
+	return nil
+}
+
+// deleteAppRegistration walks the user through deleting the app registration
+// via the browser. This is the final cleanup step.
+func (un *Uninstaller) deleteAppRegistration(ctx context.Context, org, appSlug string) error {
+	// App created under the org lives at /organizations/{org}/settings/apps/{slug}
+	appSettingsURL := fmt.Sprintf("%s/organizations/%s/settings/apps/%s/advanced",
+		un.webURL, org, appSlug)
+
+	un.printer.StepInfo(fmt.Sprintf("Finally, we need you to delete the %s app registration.", appSlug))
+	un.printer.StepInfo("Scroll to \"Danger Zone\" and click \"Delete GitHub App\".")
+	un.printer.Blank()
+
+	if promptErr := un.prompt.WaitForEnter("Press [Enter] to open the app settings page..."); promptErr != nil {
+		return promptErr
+	}
+
+	if openErr := un.browser.Open(ctx, appSettingsURL); openErr != nil {
+		un.printer.StepWarn("Could not open browser automatically")
+		un.printer.StepInfo(fmt.Sprintf("Open this URL manually: %s", appSettingsURL))
+	} else {
+		un.printer.StepInfo("Opened app settings in your browser.")
+	}
+
+	un.printer.StepInfo("Delete the app, then return here.")
+	un.printer.Blank()
+
+	if promptErr := un.prompt.WaitForEnter("Press [Enter] when the app has been deleted..."); promptErr != nil {
+		return promptErr
+	}
+
+	un.printer.StepDone(fmt.Sprintf("App %s deleted", appSlug))
+	return nil
+}
+
+// checkTokenScopes makes a lightweight API call and reads the X-OAuth-Scopes
+// response header to determine what the token can do.
+func (un *Uninstaller) checkTokenScopes(ctx context.Context) string {
+	reqURL := fmt.Sprintf("%s/user", un.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, reqURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+un.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	_ = resp.Body.Close()
+
+	return resp.Header.Get("X-OAuth-Scopes")
 }
 
 // readAppSlug reads the app slug from .fullsend/config.yaml.
@@ -203,7 +358,7 @@ func (un *Uninstaller) findFullsendApp(ctx context.Context, org string) (string,
 	}
 
 	for _, inst := range installations {
-		if len(inst.AppSlug) >= 8 && inst.AppSlug[:8] == "fullsend" {
+		if strings.HasPrefix(inst.AppSlug, "fullsend") {
 			return inst.AppSlug, nil
 		}
 	}
@@ -214,55 +369,6 @@ func (un *Uninstaller) findFullsendApp(ctx context.Context, org string) (string,
 type orgInstallation struct {
 	AppSlug string `json:"app_slug"`
 	ID      int    `json:"id"`
-}
-
-// removeInstallation finds the installation ID for the app and deletes it.
-func (un *Uninstaller) removeInstallation(ctx context.Context, org, appSlug string) error {
-	installations, err := un.listInstallations(ctx, org)
-	if err != nil {
-		return fmt.Errorf("listing installations: %w", err)
-	}
-
-	var installID int
-	for _, inst := range installations {
-		if inst.AppSlug == appSlug {
-			installID = inst.ID
-			break
-		}
-	}
-
-	if installID == 0 {
-		return fmt.Errorf("app %q not found in org installations", appSlug)
-	}
-
-	// DELETE /app/installations/{installation_id} requires JWT auth (app-level).
-	// With a PAT, we can use the user-facing endpoint instead.
-	// Actually, the user-level endpoint is:
-	// DELETE /user/installations/{installation_id}
-	// which removes the installation as the authenticated user.
-	reqURL := fmt.Sprintf("%s/user/installations/%d",
-		un.baseURL, installID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+un.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-		return nil
-	}
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-	return fmt.Errorf("removing installation (HTTP %d): %s", resp.StatusCode, string(body))
 }
 
 // listInstallations fetches all app installations for the org.

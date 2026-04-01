@@ -88,6 +88,13 @@ func (stdinConfirmPrompter) ConfirmWithInput(prompt, expected string) (bool, err
 	return strings.TrimSpace(line) == expected, nil
 }
 
+func (stdinConfirmPrompter) WaitForEnter(prompt string) error {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	_, err := reader.ReadString('\n')
+	return err
+}
+
 // Ensure stdinConfirmPrompter satisfies the interface at compile time.
 var _ uninstall.Prompter = stdinConfirmPrompter{}
 

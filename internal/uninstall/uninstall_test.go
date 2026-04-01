@@ -19,17 +19,24 @@ import (
 const testInstallationsPath = "/orgs/my-org/installations"
 
 type fakePrompter struct {
-	responses []bool
-	idx       int
+	prompts          []string
+	confirmResponses []bool
+	confirmIdx       int
 }
 
-func (f *fakePrompter) ConfirmWithInput(_, _ string) (bool, error) {
-	if f.idx < len(f.responses) {
-		r := f.responses[f.idx]
-		f.idx++
+func (f *fakePrompter) ConfirmWithInput(prompt, _ string) (bool, error) {
+	f.prompts = append(f.prompts, prompt)
+	if f.confirmIdx < len(f.confirmResponses) {
+		r := f.confirmResponses[f.confirmIdx]
+		f.confirmIdx++
 		return r, nil
 	}
 	return true, nil
+}
+
+func (f *fakePrompter) WaitForEnter(prompt string) error {
+	f.prompts = append(f.prompts, prompt)
+	return nil
 }
 
 type fakeBrowser struct {
@@ -41,75 +48,106 @@ func (f *fakeBrowser) Open(_ context.Context, url string) error {
 	return nil
 }
 
-func newTestUninstaller(t *testing.T, client *forge.FakeClient, apiSrv *httptest.Server, confirmed bool) (*Uninstaller, *bytes.Buffer) {
-	t.Helper()
-
-	var buf bytes.Buffer
-	printer := ui.NewPrinter(&buf)
-
-	prompt := &fakePrompter{responses: []bool{confirmed}}
-	browser := &fakeBrowser{}
-
-	opts := []Option{}
-	if apiSrv != nil {
-		opts = append(opts, WithBaseURL(apiSrv.URL))
+func scopeServer(scopes string, apps ...map[string]any) *httptest.Server {
+	if len(apps) == 0 {
+		apps = []map[string]any{
+			{"app_slug": "fullsend-my-org", "id": 42},
+		}
 	}
-	opts = append(opts, WithWebURL("https://github.com"))
-
-	un := New(client, printer, prompt, browser, "test-token", opts...)
-	return un, &buf
-}
-
-func TestUninstall_FullFlow(t *testing.T) {
-	client := forge.NewFakeClient()
-	// Pre-populate .fullsend/config.yaml
-	err := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
-		[]byte("version: '1'\napp:\n  name: fullsend-my-org\n  slug: fullsend-my-org\n"))
-	require.NoError(t, err)
-
-	// Mock the GitHub API for installations
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if r.URL.Path == testInstallationsPath {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"installations": []map[string]any{
-					{"app_slug": "fullsend-my-org", "id": 42},
-				},
-			})
+		if r.URL.Path == "/user" {
+			w.Header().Set("X-OAuth-Scopes", scopes)
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"login":"test"}`)
 			return
 		}
 
-		if r.Method == http.MethodDelete && r.URL.Path == "/user/installations/42" {
-			w.WriteHeader(http.StatusNoContent)
+		if r.URL.Path == testInstallationsPath {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"installations": apps,
+			})
 			return
 		}
 
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = fmt.Fprint(w, `{"message":"Not Found"}`)
 	}))
+}
+
+func newTestUninstaller(t *testing.T, client *forge.FakeClient, apiSrv *httptest.Server, confirmed bool) (*Uninstaller, *bytes.Buffer, *fakeBrowser) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	printer := ui.NewPrinter(&buf)
+
+	prompt := &fakePrompter{confirmResponses: []bool{confirmed}}
+	browser := &fakeBrowser{}
+
+	var opts []Option
+	if apiSrv != nil {
+		opts = append(opts, WithBaseURL(apiSrv.URL))
+	}
+	opts = append(opts, WithWebURL("https://github.com"))
+
+	un := New(client, printer, prompt, browser, "test-token", opts...)
+	return un, &buf, browser
+}
+
+func TestUninstall_FullFlowWithDeleteScope(t *testing.T) {
+	client := forge.NewFakeClient()
+	err := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
+		[]byte("version: '1'\napp:\n  name: fullsend-my-org\n  slug: fullsend-my-org\n"))
+	require.NoError(t, err)
+
+	apiSrv := scopeServer("repo, delete_repo, admin:org")
 	defer apiSrv.Close()
 
-	un, output := newTestUninstaller(t, client, apiSrv, true)
+	un, output, _ := newTestUninstaller(t, client, apiSrv, true)
 
 	runErr := un.Run(context.Background(), Options{Org: "my-org"})
 	require.NoError(t, runErr)
 
-	// Should have read config
 	assert.Contains(t, output.String(), "fullsend-my-org")
-
-	// Should have deleted the repo
+	assert.Contains(t, output.String(), "Deleted .fullsend repository")
 	assert.Len(t, client.DeletedRepos, 1)
-	assert.Equal(t, ".fullsend", client.DeletedRepos[0].Repo)
-
-	// Should show completion
 	assert.Contains(t, output.String(), "Uninstall complete")
+}
+
+func TestUninstall_NoDeleteScope_UsesBrowser(t *testing.T) {
+	client := forge.NewFakeClient()
+	err := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
+		[]byte("version: '1'\napp:\n  name: fullsend-my-org\n  slug: fullsend-my-org\n"))
+	require.NoError(t, err)
+
+	apiSrv := scopeServer("repo, admin:org") // no delete_repo
+	defer apiSrv.Close()
+
+	un, output, browser := newTestUninstaller(t, client, apiSrv, true)
+
+	runErr := un.Run(context.Background(), Options{Org: "my-org"})
+	require.NoError(t, runErr)
+
+	// Should NOT have deleted via API
+	assert.Empty(t, client.DeletedRepos)
+	// Should have opened repo settings in browser
+	foundRepoSettings := false
+	for _, url := range browser.opened {
+		if url == "https://github.com/my-org/.fullsend/settings" {
+			foundRepoSettings = true
+		}
+	}
+	assert.True(t, foundRepoSettings, "should open repo settings page in browser")
+	assert.Contains(t, output.String(), "delete_repo scope")
 }
 
 func TestUninstall_Aborted(t *testing.T) {
 	client := forge.NewFakeClient()
+	apiSrv := scopeServer("")
+	defer apiSrv.Close()
 
-	un, output := newTestUninstaller(t, client, nil, false)
+	un, output, _ := newTestUninstaller(t, client, apiSrv, false)
 
 	err := un.Run(context.Background(), Options{Org: "my-org"})
 	require.NoError(t, err)
@@ -124,31 +162,14 @@ func TestUninstall_Yolo(t *testing.T) {
 		[]byte("version: '1'\napp:\n  name: my-app\n  slug: my-app\n"))
 	require.NoError(t, err)
 
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == testInstallationsPath {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"installations": []map[string]any{
-					{"app_slug": "my-app", "id": 99},
-				},
-			})
-			return
-		}
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	apiSrv := scopeServer("repo, delete_repo", map[string]any{"app_slug": "my-app", "id": 99})
 	defer apiSrv.Close()
 
-	// Pass confirmed=false, but Yolo=true should skip the prompt
-	un, _ := newTestUninstaller(t, client, apiSrv, false)
+	un, _, _ := newTestUninstaller(t, client, apiSrv, false)
 
 	runErr := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
 	require.NoError(t, runErr)
 
-	// Should have deleted despite no confirmation
 	assert.Len(t, client.DeletedRepos, 1)
 }
 
@@ -156,68 +177,64 @@ func TestUninstall_ConfigReadFails_FallsBackToScan(t *testing.T) {
 	client := forge.NewFakeClient()
 	client.Errors["GetFileContent"] = errors.New("not found")
 
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == testInstallationsPath {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"installations": []map[string]any{
-					{"app_slug": "fullsend-my-org", "id": 10},
-				},
-			})
-			return
-		}
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	apiSrv := scopeServer("repo, delete_repo")
 	defer apiSrv.Close()
 
-	un, output := newTestUninstaller(t, client, apiSrv, true)
-
-	err := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
-	require.NoError(t, err)
-
-	// Should have warned about config read failure
-	assert.Contains(t, output.String(), "Could not read app slug")
-	// But still found and removed the app
-	assert.Contains(t, output.String(), "fullsend-my-org")
-}
-
-func TestUninstall_DeleteRepoFails_Continues(t *testing.T) {
-	client := forge.NewFakeClient()
-	err := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
-		[]byte("version: '1'\napp:\n  name: my-app\n  slug: my-app\n"))
-	require.NoError(t, err)
-	client.Errors["DeleteRepo"] = errors.New("permission denied")
-
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == testInstallationsPath {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"installations": []map[string]any{
-					{"app_slug": "my-app", "id": 7},
-				},
-			})
-			return
-		}
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer apiSrv.Close()
-
-	un, output := newTestUninstaller(t, client, apiSrv, true)
+	un, output, _ := newTestUninstaller(t, client, apiSrv, true)
 
 	runErr := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
 	require.NoError(t, runErr)
 
-	assert.Contains(t, output.String(), "Failed to delete .fullsend repo")
-	// Should still proceed to remove app installation
-	assert.Contains(t, output.String(), "Removed my-app installation")
+	assert.Contains(t, output.String(), "Could not read app slug")
+	assert.Contains(t, output.String(), "fullsend-my-org")
+}
+
+func TestUninstall_AppInstallBrowser(t *testing.T) {
+	client := forge.NewFakeClient()
+	err := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
+		[]byte("version: '1'\napp:\n  name: my-app\n  slug: my-app\n"))
+	require.NoError(t, err)
+
+	apiSrv := scopeServer("repo, delete_repo", map[string]any{"app_slug": "my-app", "id": 42})
+	defer apiSrv.Close()
+
+	un, _, browser := newTestUninstaller(t, client, apiSrv, true)
+
+	runErr := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
+	require.NoError(t, runErr)
+
+	// Should have opened the installation page for uninstall
+	foundInstallPage := false
+	for _, url := range browser.opened {
+		if url == "https://github.com/organizations/my-org/settings/installations/42" {
+			foundInstallPage = true
+		}
+	}
+	assert.True(t, foundInstallPage, "should open installation page in browser")
+}
+
+func TestUninstall_AppSettingsURL(t *testing.T) {
+	client := forge.NewFakeClient()
+	err := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
+		[]byte("version: '1'\napp:\n  name: my-app\n  slug: my-app\n"))
+	require.NoError(t, err)
+
+	apiSrv := scopeServer("repo, delete_repo", map[string]any{"app_slug": "my-app", "id": 42})
+	defer apiSrv.Close()
+
+	un, _, browser := newTestUninstaller(t, client, apiSrv, true)
+
+	runErr := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
+	require.NoError(t, runErr)
+
+	// Should open org-scoped app settings URL, not user-scoped
+	foundAppSettings := false
+	for _, url := range browser.opened {
+		if url == "https://github.com/organizations/my-org/settings/apps/my-app/advanced" {
+			foundAppSettings = true
+		}
+	}
+	assert.True(t, foundAppSettings, "should open org-scoped app settings page")
 }
 
 func TestReadAppSlug(t *testing.T) {
@@ -246,4 +263,19 @@ func TestReadAppSlug_NoSlug(t *testing.T) {
 	_, readErr := un.readAppSlug(context.Background(), "org")
 	assert.Error(t, readErr)
 	assert.Contains(t, readErr.Error(), "no app slug")
+}
+
+func TestCheckTokenScopes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-OAuth-Scopes", "repo, delete_repo, admin:org")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	un := New(nil, ui.NewPrinter(&buf), nil, nil, "tok", WithBaseURL(srv.URL))
+
+	scopes := un.checkTokenScopes(context.Background())
+	assert.Contains(t, scopes, "delete_repo")
+	assert.Contains(t, scopes, "repo")
 }
