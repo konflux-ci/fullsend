@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/fullsend-ai/fullsend/internal/appsetup"
 	"github.com/fullsend-ai/fullsend/internal/config"
@@ -115,6 +116,9 @@ Examples:
 				printer.Header(fmt.Sprintf("Setting up %d agent apps", len(activeRoles)))
 				printer.Blank()
 
+				// Read existing config.yaml for known agent slugs
+				knownSlugs := readKnownSlugs(cmd.Context(), client, org)
+
 				// Provide a secret checker so appsetup can verify PEM keys exist
 				// before offering to reuse an existing app
 				secretCheck := appsetup.WithSecretCheck(func(ctx context.Context, role string) bool {
@@ -130,6 +134,7 @@ Examples:
 					appsetup.DefaultBrowser{},
 					token,
 					secretCheck,
+					appsetup.WithKnownSlugs(knownSlugs),
 				)
 
 				for _, role := range activeRoles {
@@ -173,6 +178,30 @@ Examples:
 		"Skip GitHub App creation (use if the apps already exist)")
 
 	return cmd
+}
+
+// readKnownSlugs reads agent slugs from an existing .fullsend/config.yaml.
+// Returns an empty map if the file doesn't exist or can't be parsed.
+func readKnownSlugs(ctx context.Context, client *forgegithub.LiveClient, org string) map[string]string {
+	data, err := client.GetFileContent(ctx, org, ".fullsend", "config.yaml")
+	if err != nil {
+		return nil
+	}
+
+	var cfg config.OrgConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+
+	if len(cfg.Agents) == 0 {
+		return nil
+	}
+
+	slugs := make(map[string]string, len(cfg.Agents))
+	for _, a := range cfg.Agents {
+		slugs[a.Role] = a.Slug
+	}
+	return slugs
 }
 
 // resolveToken finds a GitHub token from available sources.

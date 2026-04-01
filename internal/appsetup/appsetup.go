@@ -83,6 +83,7 @@ type Setup struct {
 	prompt       Prompter
 	browser      BrowserOpener
 	secretExists SecretExistsFunc
+	knownSlugs   map[string]string // role → slug from existing config.yaml
 	token        string
 	baseURL      string // GitHub API base URL (for testing)
 	webURL       string // GitHub web base URL (for testing)
@@ -106,6 +107,14 @@ func WithWebURL(url string) Option {
 // the app can't be reused (the PEM is only available at creation time).
 func WithSecretCheck(fn SecretExistsFunc) Option {
 	return func(s *Setup) { s.secretExists = fn }
+}
+
+// WithKnownSlugs provides a mapping of role → slug from an existing
+// config.yaml. When set, findExistingApp uses these slugs for detection
+// instead of guessing from naming conventions. This handles cases where
+// the user renamed an app during creation.
+func WithKnownSlugs(slugs map[string]string) Option {
+	return func(s *Setup) { s.knownSlugs = slugs }
 }
 
 // New creates a Setup with the given dependencies.
@@ -446,23 +455,36 @@ func expectedAppSlug(org, role string) string {
 	return fmt.Sprintf("fullsend-%s-%s", org, role)
 }
 
-// findExistingApp checks the org's installed apps for one whose slug matches
-// the expected pattern for the given role.
-// Returns nil if none found.
+// findExistingApp checks the org's installed apps for one matching this role.
+// It first checks the known slug from config.yaml (if available), then falls
+// back to the naming convention. Returns nil if none found.
 func (s *Setup) findExistingApp(ctx context.Context, org, role string) (*AppCredentials, error) {
 	installations, err := s.listInstallations(ctx, org)
 	if err != nil {
 		return nil, err
 	}
 
-	expected := expectedAppSlug(org, role)
+	// Build the list of slugs to look for: config slug first, then convention
+	var candidates []string
+	if s.knownSlugs != nil {
+		if slug, ok := s.knownSlugs[role]; ok && slug != "" {
+			candidates = append(candidates, slug)
+		}
+	}
+	conventionSlug := expectedAppSlug(org, role)
+	if len(candidates) == 0 || candidates[0] != conventionSlug {
+		candidates = append(candidates, conventionSlug)
+	}
+
 	for _, inst := range installations {
-		if inst.AppSlug == expected {
-			return &AppCredentials{
-				Name:    inst.AppSlug,
-				Slug:    inst.AppSlug,
-				HTMLURL: fmt.Sprintf("%s/apps/%s", s.webURL, inst.AppSlug),
-			}, nil
+		for _, candidate := range candidates {
+			if inst.AppSlug == candidate {
+				return &AppCredentials{
+					Name:    inst.AppSlug,
+					Slug:    inst.AppSlug,
+					HTMLURL: fmt.Sprintf("%s/apps/%s", s.webURL, inst.AppSlug),
+				}, nil
+			}
 		}
 	}
 
