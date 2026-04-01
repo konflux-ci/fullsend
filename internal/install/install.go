@@ -124,9 +124,14 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 	if discovered.ConfigRepoExists {
 		inst.printer.StepDone(".fullsend repository already exists")
 	} else {
-		inst.printer.StepStart("Creating .fullsend repository...")
+		makePrivate := discovered.HasPrivateRepos
+		if makePrivate {
+			inst.printer.StepStart("Creating .fullsend repository (private — your org has private repos)...")
+		} else {
+			inst.printer.StepStart("Creating .fullsend repository (public — your org has no private repos)...")
+		}
 		if _, repoErr := inst.client.CreateRepo(ctx, opts.Org, ".fullsend",
-			"Fullsend agent configuration for "+opts.Org, true); repoErr != nil {
+			"Fullsend agent configuration for "+opts.Org, makePrivate); repoErr != nil {
 			inst.printer.StepFail("Failed to create .fullsend repository")
 			return nil, fmt.Errorf("creating .fullsend repo: %w", repoErr)
 		}
@@ -152,6 +157,7 @@ type discoverResult struct {
 	DefaultBranches  map[string]string
 	Names            []string
 	ConfigRepoExists bool
+	HasPrivateRepos  bool
 }
 
 func (inst *Installer) discoverRepos(ctx context.Context, org string) (*discoverResult, error) {
@@ -173,6 +179,9 @@ func (inst *Installer) discoverRepos(ctx context.Context, org string) (*discover
 		}
 		result.Names = append(result.Names, r.Name)
 		result.DefaultBranches[r.Name] = r.DefaultBranch
+		if r.Private {
+			result.HasPrivateRepos = true
+		}
 	}
 	sort.Strings(result.Names)
 

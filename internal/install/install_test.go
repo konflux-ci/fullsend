@@ -310,15 +310,36 @@ func TestInstall_DefaultBranch(t *testing.T) {
 	assert.Equal(t, "develop", result.DefaultBranches["api"])
 }
 
-func TestInstall_ConfigRepoIsPrivate(t *testing.T) {
+func TestInstall_ConfigRepoPrivateWhenOrgHasPrivateRepos(t *testing.T) {
 	client := forge.NewFakeClient()
-	inst, _ := newTestInstaller(client)
+	client.Repos = []forge.Repository{
+		{Name: "public-repo", Private: false},
+		{Name: "secret-repo", Private: true},
+	}
+	inst, output := newTestInstaller(client)
 
 	_, err := inst.Run(context.Background(), Options{Org: "org"})
 	require.NoError(t, err)
 
 	require.Len(t, client.CreatedRepos, 1)
-	assert.True(t, client.CreatedRepos[0].Private, ".fullsend repo should be private")
+	assert.True(t, client.CreatedRepos[0].Private, ".fullsend repo should be private when org has private repos")
+	assert.Contains(t, output.String(), "private")
+}
+
+func TestInstall_ConfigRepoPublicWhenOrgHasNoPrivateRepos(t *testing.T) {
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
+		{Name: "public-one", Private: false},
+		{Name: "public-two", Private: false},
+	}
+	inst, output := newTestInstaller(client)
+
+	_, err := inst.Run(context.Background(), Options{Org: "org"})
+	require.NoError(t, err)
+
+	require.Len(t, client.CreatedRepos, 1)
+	assert.False(t, client.CreatedRepos[0].Private, ".fullsend repo should be public when org has no private repos")
+	assert.Contains(t, output.String(), "public")
 }
 
 func TestInstall_InvalidOrgName(t *testing.T) {
