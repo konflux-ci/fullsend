@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/config"
 	"github.com/fullsend-ai/fullsend/internal/forge"
@@ -195,32 +196,53 @@ func (inst *Installer) createConfigRepo(ctx context.Context, org string, result 
 		return fmt.Errorf("creating .fullsend repo: %w", err)
 	}
 
-	// Write config.yaml
+	// Write files sequentially — each CreateFile call creates a commit,
+	// so we must wait for each to complete before creating the next.
+	// The first call may need retries because GitHub hasn't finished
+	// initializing the repo's default branch yet.
 	configData, err := result.Config.Marshal()
 	if err != nil {
 		return fmt.Errorf("marshalling config: %w", err)
 	}
 
-	if err := inst.client.CreateFile(ctx, org, ".fullsend", "config.yaml",
-		"Initialize fullsend configuration with safe defaults", configData); err != nil {
-		inst.printer.StepFail("Failed to create config.yaml")
-		return fmt.Errorf("creating config.yaml: %w", err)
+	files := []struct {
+		path, message string
+		content       []byte
+	}{
+		{"config.yaml", "Initialize fullsend configuration with safe defaults", configData},
+		{".github/workflows/agent.yaml", "Add reusable agent dispatch workflow", []byte(generateReusableWorkflow())},
+		{"CODEOWNERS", "Add CODEOWNERS to protect configuration", []byte(generateCodeowners(org))},
 	}
 
-	// Write reusable workflow
-	workflowContent := generateReusableWorkflow()
-	if err := inst.client.CreateFile(ctx, org, ".fullsend", ".github/workflows/agent.yaml",
-		"Add reusable agent dispatch workflow", []byte(workflowContent)); err != nil {
-		inst.printer.StepFail("Failed to create reusable workflow")
-		return fmt.Errorf("creating reusable workflow: %w", err)
-	}
+	for i, f := range files {
+		var createErr error
+		// Retry the first file with backoff — GitHub may not have finished
+		// initializing the default branch after repo creation.
+		maxAttempts := 1
+		if i == 0 {
+			maxAttempts = 5
+		}
 
-	// Write CODEOWNERS
-	codeownersContent := generateCodeowners(org)
-	if err := inst.client.CreateFile(ctx, org, ".fullsend", "CODEOWNERS",
-		"Add CODEOWNERS to protect configuration", []byte(codeownersContent)); err != nil {
-		inst.printer.StepFail("Failed to create CODEOWNERS")
-		return fmt.Errorf("creating CODEOWNERS: %w", err)
+		for attempt := range maxAttempts {
+			createErr = inst.client.CreateFile(ctx, org, ".fullsend", f.path, f.message, f.content)
+			if createErr == nil {
+				break
+			}
+			if attempt < maxAttempts-1 {
+				wait := time.Duration(attempt+1) * time.Second
+				inst.printer.StepInfo(fmt.Sprintf("Waiting for repo to be ready (%v)...", wait))
+				select {
+				case <-time.After(wait):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+
+		if createErr != nil {
+			inst.printer.StepFail(fmt.Sprintf("Failed to create %s: %v", f.path, createErr))
+			return fmt.Errorf("creating %s: %w", f.path, createErr)
+		}
 	}
 
 	inst.printer.StepDone("Created .fullsend repository with config and workflows")

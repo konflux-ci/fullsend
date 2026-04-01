@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/ui"
@@ -186,7 +187,11 @@ func TestInstall_CreateFileError(t *testing.T) {
 
 	inst, _ := newTestInstaller(client)
 
-	_, err := inst.Run(context.Background(), Options{Org: "org"})
+	// Use a short-lived context to avoid waiting through retry backoff
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err := inst.Run(ctx, Options{Org: "org"})
 	assert.Error(t, err)
 }
 
