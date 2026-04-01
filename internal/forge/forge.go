@@ -36,6 +36,9 @@ type Client interface {
 	// CreateFile creates a file in a repository on the default branch.
 	CreateFile(ctx context.Context, owner, repo, path, message string, content []byte) error
 
+	// CreateOrUpdateFile creates a file if it doesn't exist, or updates it if it does.
+	CreateOrUpdateFile(ctx context.Context, owner, repo, path, message string, content []byte) error
+
 	// CreateChangeProposal creates a change proposal (PR/MR) from head to base branch.
 	CreateChangeProposal(ctx context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error)
 

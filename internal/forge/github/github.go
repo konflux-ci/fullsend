@@ -111,6 +111,29 @@ func (c *LiveClient) CreateFileOnBranch(ctx context.Context, owner, repo, branch
 	return c.put(ctx, reqURL, body, &result)
 }
 
+// CreateOrUpdateFile creates a file if it doesn't exist, or updates it if it does.
+// For updates, it fetches the current file SHA first (required by the Contents API).
+func (c *LiveClient) CreateOrUpdateFile(ctx context.Context, owner, repo, path, message string, content []byte) error {
+	reqURL := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, url.PathEscape(owner), url.PathEscape(repo), path)
+
+	body := map[string]any{
+		"message": message,
+		"content": base64.StdEncoding.EncodeToString(content),
+	}
+
+	// Try to get the existing file's SHA
+	var existing struct {
+		SHA string `json:"sha"`
+	}
+	if err := c.get(ctx, reqURL, &existing); err == nil && existing.SHA != "" {
+		body["sha"] = existing.SHA
+	}
+	// If get fails (404 = file doesn't exist), proceed without SHA to create it
+
+	var result json.RawMessage
+	return c.put(ctx, reqURL, body, &result)
+}
+
 // CreateBranch creates a new branch from the default branch's HEAD.
 func (c *LiveClient) CreateBranch(ctx context.Context, owner, repo, branchName string) error {
 	// First, get the default branch SHA

@@ -183,7 +183,7 @@ func TestInstall_CreateRepoError(t *testing.T) {
 
 func TestInstall_CreateFileError(t *testing.T) {
 	client := forge.NewFakeClient()
-	client.Errors["CreateFile"] = errors.New("write failed")
+	client.Errors["CreateOrUpdateFile"] = errors.New("write failed")
 
 	inst, _ := newTestInstaller(client)
 

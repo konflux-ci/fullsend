@@ -239,17 +239,11 @@ func (inst *Installer) writeConfigFiles(ctx context.Context, org string, result 
 				}
 			}
 
-			createErr = inst.client.CreateFile(ctx, org, ".fullsend", f.path, f.message, f.content)
+			createErr = inst.client.CreateOrUpdateFile(ctx, org, ".fullsend", f.path, f.message, f.content)
 			if createErr == nil {
 				break
 			}
 
-			// 422 means the file already exists — not retriable, just skip
-			if isAlreadyExistsError(createErr) {
-				inst.printer.StepInfo(fmt.Sprintf("%s already exists — skipping", f.path))
-				createErr = nil
-				break
-			}
 		}
 
 		if createErr != nil {
@@ -260,16 +254,6 @@ func (inst *Installer) writeConfigFiles(ctx context.Context, org string, result 
 
 	inst.printer.StepDone("Configuration files written to .fullsend")
 	return nil
-}
-
-// isAlreadyExistsError checks if the error is a 422 "already exists" from
-// the GitHub Contents API.
-func isAlreadyExistsError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "422") && strings.Contains(msg, "exists")
 }
 
 func (inst *Installer) createEnrollmentPRs(ctx context.Context, org string, result *Result) error {

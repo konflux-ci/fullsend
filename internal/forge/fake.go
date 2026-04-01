@@ -110,6 +110,30 @@ func (f *FakeClient) CreateFile(_ context.Context, owner, repo, path, message st
 	return nil
 }
 
+// CreateOrUpdateFile implements the Client interface.
+// In the fake, it behaves the same as CreateFile — overwrites any existing entry.
+func (f *FakeClient) CreateOrUpdateFile(_ context.Context, owner, repo, path, message string, content []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if err := f.Errors["CreateOrUpdateFile"]; err != nil {
+		return err
+	}
+
+	// Remove existing file with same path if present
+	for i, file := range f.CreatedFiles {
+		if file.Owner == owner && file.Repo == repo && file.Path == path {
+			f.CreatedFiles = append(f.CreatedFiles[:i], f.CreatedFiles[i+1:]...)
+			break
+		}
+	}
+
+	f.CreatedFiles = append(f.CreatedFiles, createFileCall{
+		Owner: owner, Repo: repo, Path: path, Message: message, Content: content,
+	})
+	return nil
+}
+
 // CreateChangeProposal implements the Client interface.
 func (f *FakeClient) CreateChangeProposal(_ context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error) {
 	f.mu.Lock()
