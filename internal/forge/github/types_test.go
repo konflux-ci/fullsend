@@ -70,5 +70,5 @@ func TestAgentAppConfig_UnknownRole(t *testing.T) {
 
 func TestDefaultAgentRoles(t *testing.T) {
 	roles := DefaultAgentRoles()
-	assert.Equal(t, []string{"triage", "coder", "review"}, roles)
+	assert.Equal(t, []string{"fullsend", "triage", "coder", "review"}, roles)
 }

@@ -74,12 +74,12 @@ type RepoConfig struct {
 
 // DefaultRoles returns the standard set of agent roles.
 func DefaultRoles() []string {
-	return []string{"triage", "coder", "review"}
+	return []string{"fullsend", "triage", "coder", "review"}
 }
 
 // ValidRoles returns the set of recognized agent roles.
 func ValidRoles() map[string]bool {
-	return map[string]bool{"triage": true, "coder": true, "review": true}
+	return map[string]bool{"fullsend": true, "triage": true, "coder": true, "review": true}
 }
 
 // NewOrgConfig creates a new OrgConfig with safe defaults.

@@ -224,7 +224,7 @@ func TestOrgConfig_AgentSlugs_Empty(t *testing.T) {
 }
 
 func TestDefaultRoles(t *testing.T) {
-	assert.Equal(t, []string{"triage", "coder", "review"}, DefaultRoles())
+	assert.Equal(t, []string{"fullsend", "triage", "coder", "review"}, DefaultRoles())
 }
 
 func TestValidRoles(t *testing.T) {

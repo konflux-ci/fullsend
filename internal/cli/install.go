@@ -32,9 +32,10 @@ for each agent role, a .fullsend configuration repository with safe
 defaults, and enrollment PRs for any repos you want to enable.
 
 Each agent role gets its own GitHub App with least-privilege permissions:
-  - triage: issues read/write (labels, assigns, triages)
-  - coder:  contents write, PRs write, checks read (pushes code)
-  - review: PRs write, contents read, checks read (reviews code)
+  - fullsend: maintenance/bootstrap (config, workflows, repo settings)
+  - triage:   issues read/write (labels, assigns, triages)
+  - coder:    contents write, PRs write, checks read (pushes code)
+  - review:   PRs write, contents read, checks read (reviews code)
 
 The install command walks you through creating and installing each app.
 
@@ -51,11 +52,11 @@ Nothing gets automatically merged as a result of installation.
 Repos receive PRs that must be reviewed and merged to take effect.
 
 Examples:
-  # Full install with all three agents
+  # Full install with all four agents
   fullsend install my-org
 
   # Install with only specific agents
-  fullsend install my-org --agents triage,review
+  fullsend install my-org --agents fullsend,triage,review
 
   # Install and enable a specific repo
   fullsend install my-org --repo cool-project
@@ -165,7 +166,7 @@ Examples:
 	cmd.Flags().StringSliceVar(&repos, "repo", nil,
 		"Repository to enable during installation (can be repeated)")
 	cmd.Flags().StringSliceVar(&roles, "agents", nil,
-		"Agent roles to enable (comma-separated: triage,coder,review)")
+		"Agent roles to enable (comma-separated: fullsend,triage,coder,review)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Preview what would happen without making changes")
 	cmd.Flags().BoolVar(&skipApp, "skip-app-setup", false,

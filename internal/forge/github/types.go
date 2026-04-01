@@ -5,10 +5,12 @@ import "fmt"
 
 // AppPermissions describes the GitHub App permissions.
 type AppPermissions struct {
-	Issues       string `json:"issues,omitempty"`
-	PullRequests string `json:"pull_requests,omitempty"`
-	Checks       string `json:"checks,omitempty"`
-	Contents     string `json:"contents,omitempty"`
+	Issues         string `json:"issues,omitempty"`
+	PullRequests   string `json:"pull_requests,omitempty"`
+	Checks         string `json:"checks,omitempty"`
+	Contents       string `json:"contents,omitempty"`
+	Administration string `json:"administration,omitempty"`
+	Members        string `json:"members,omitempty"`
 }
 
 // AppConfig holds the configuration for creating a GitHub App.
@@ -23,8 +25,9 @@ type AppConfig struct {
 // AgentAppConfig returns the GitHub App configuration for a specific agent role.
 // Each agent gets different permissions following the principle of least privilege:
 //
+//   - fullsend: maintenance/bootstrap agent — manages .fullsend config, workflows, repo settings
 //   - triage: issues read/write — reads issues, labels, and assigns; no code access
-//   - coder: contents read/write, pull_requests write, checks read — pushes code, creates PRs
+//   - coder: issues read, contents write, pull_requests write, checks read — pushes code, creates PRs
 //   - review: pull_requests write, contents read, checks read — reviews PRs, reads code, no push
 func AgentAppConfig(org, role string) *AppConfig {
 	base := &AppConfig{
@@ -32,6 +35,23 @@ func AgentAppConfig(org, role string) *AppConfig {
 	}
 
 	switch role {
+	case "fullsend":
+		base.Name = fmt.Sprintf("fullsend-%s", org)
+		base.Description = fmt.Sprintf("fullsend maintenance agent for %s — bootstrapping and config management", org)
+		base.Permissions = AppPermissions{
+			Contents:       "write",
+			Issues:         "read",
+			PullRequests:   "write",
+			Checks:         "read",
+			Administration: "write",
+			Members:        "read",
+		}
+		base.Events = []string{
+			"issues",
+			"push",
+			"workflow_dispatch",
+		}
+
 	case "triage":
 		base.Name = fmt.Sprintf("fullsend-%s-triage", org)
 		base.Description = fmt.Sprintf("fullsend triage agent for %s — issue triage and labeling", org)
@@ -88,5 +108,5 @@ func AgentAppConfig(org, role string) *AppConfig {
 
 // DefaultAgentRoles returns the standard set of agent roles.
 func DefaultAgentRoles() []string {
-	return []string{"triage", "coder", "review"}
+	return []string{"fullsend", "triage", "coder", "review"}
 }
