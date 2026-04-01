@@ -104,7 +104,7 @@ Examples:
 			}
 			printer.StepDone(fmt.Sprintf("Authenticated via %s", source))
 
-			var agentEntries []config.AgentEntry
+			var agentCreds []install.AgentCredentials
 
 			// Step 1: Create and install GitHub Apps for each agent role
 			if !skipApp {
@@ -125,25 +125,25 @@ Examples:
 						return fmt.Errorf("app setup for %s agent: %w", role, setupErr)
 					}
 
-					agentEntries = append(agentEntries, config.AgentEntry{
-						Role: role,
-						Name: creds.Name,
-						Slug: creds.Slug,
+					agentCreds = append(agentCreds, install.AgentCredentials{
+						AgentEntry: config.AgentEntry{
+							Role: role,
+							Name: creds.Name,
+							Slug: creds.Slug,
+						},
+						PEM: creds.PEM,
 					})
-
-					printer.StepInfo(fmt.Sprintf("PEM key for %s has %d bytes — store as repo secret",
-						role, len(creds.PEM)))
 					printer.Blank()
 				}
 			}
 
-			// Step 2: Create config repo and enrollment PRs
+			// Step 2: Create config repo, store secrets, and enrollment PRs
 			client := forgegithub.NewLiveClient(token)
 
 			inst := install.New(client, printer)
 			_, err := inst.Run(cmd.Context(), install.Options{
 				Org:    org,
-				Agents: agentEntries,
+				Agents: agentCreds,
 				Roles:  activeRoles,
 				Repos:  repos,
 			})

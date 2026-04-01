@@ -56,4 +56,8 @@ type Client interface {
 
 	// GetAuthenticatedUser returns the login of the currently authenticated user.
 	GetAuthenticatedUser(ctx context.Context) (string, error)
+
+	// CreateRepoSecret creates or updates an Actions secret on a repository.
+	// The value is encrypted automatically using the repo's public key.
+	CreateRepoSecret(ctx context.Context, owner, repo, name, value string) error
 }

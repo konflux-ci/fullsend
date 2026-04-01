@@ -18,6 +18,7 @@ type FakeClient struct {
 	CreatedProposals  []createProposalCall // Tracks calls to CreateChangeProposal.
 	CreatedBranches   []createBranchCall   // Tracks calls to CreateBranch.
 	DeletedRepos      []deleteRepoCall     // Tracks calls to DeleteRepo.
+	CreatedSecrets    []createSecretCall   // Tracks calls to CreateRepoSecret.
 	AuthenticatedUser string               // Returned by GetAuthenticatedUser.
 	mu                sync.Mutex
 	proposalCounter   int
@@ -43,6 +44,10 @@ type createBranchCall struct {
 
 type deleteRepoCall struct {
 	Owner, Repo string
+}
+
+type createSecretCall struct {
+	Owner, Repo, Name string
 }
 
 // NewFakeClient creates a FakeClient with no pre-configured state.
@@ -190,6 +195,21 @@ func (f *FakeClient) DeleteRepo(_ context.Context, owner, repo string) error {
 	}
 
 	f.DeletedRepos = append(f.DeletedRepos, deleteRepoCall{Owner: owner, Repo: repo})
+	return nil
+}
+
+// CreateRepoSecret implements the Client interface.
+func (f *FakeClient) CreateRepoSecret(_ context.Context, owner, repo, name, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if err := f.Errors["CreateRepoSecret"]; err != nil {
+		return err
+	}
+
+	f.CreatedSecrets = append(f.CreatedSecrets, createSecretCall{
+		Owner: owner, Repo: repo, Name: name,
+	})
 	return nil
 }
 

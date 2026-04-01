@@ -25,14 +25,21 @@ import (
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
 
+// AgentCredentials holds an agent's config entry plus its private key.
+type AgentCredentials struct {
+	config.AgentEntry
+
+	// PEM is the private key for this agent's GitHub App.
+	PEM string
+}
+
 // Options holds the parameters for an install operation.
 type Options struct {
 	// Org is the GitHub organization to install fullsend into.
 	Org string
 
 	// Agents holds the credentials for each agent app created during setup.
-	// Each entry maps a role to its app name and slug.
-	Agents []config.AgentEntry
+	Agents []AgentCredentials
 
 	// Roles is the list of agent roles to enable.
 	// If empty, the default set (triage, coder, review) is used.
@@ -141,7 +148,12 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	// Step 5: Create PRs for enabled repos
+	// Step 6: Store agent PEM keys as repo secrets
+	if err := inst.storeAgentSecrets(ctx, opts.Org, opts.Agents); err != nil {
+		return nil, err
+	}
+
+	// Step 7: Create PRs for enabled repos
 	if err := inst.createEnrollmentPRs(ctx, opts.Org, result); err != nil {
 		return nil, err
 	}
@@ -202,13 +214,44 @@ func (inst *Installer) logAgentApps(opts Options) {
 }
 
 func (inst *Installer) generateConfig(repos []string, opts Options) *config.OrgConfig {
-	cfg := config.NewOrgConfig(repos, opts.Repos, opts.Roles, opts.Agents)
+	entries := make([]config.AgentEntry, len(opts.Agents))
+	for i, a := range opts.Agents {
+		entries[i] = a.AgentEntry
+	}
+	cfg := config.NewOrgConfig(repos, opts.Repos, opts.Roles, entries)
 
 	enabledCount := len(cfg.EnabledRepos())
 	inst.printer.StepDone(fmt.Sprintf("Configuration generated (%d/%d repos enabled)",
 		enabledCount, len(repos)))
 
 	return cfg
+}
+
+func (inst *Installer) storeAgentSecrets(ctx context.Context, org string, agents []AgentCredentials) error {
+	if len(agents) == 0 {
+		return nil
+	}
+
+	inst.printer.Header("Storing agent secrets")
+	inst.printer.Blank()
+
+	for _, agent := range agents {
+		if agent.PEM == "" {
+			continue
+		}
+
+		secretName := fmt.Sprintf("FULLSEND_%s_APP_PRIVATE_KEY", strings.ToUpper(agent.Role))
+		inst.printer.StepStart(fmt.Sprintf("Storing %s...", secretName))
+
+		if err := inst.client.CreateRepoSecret(ctx, org, ".fullsend", secretName, agent.PEM); err != nil {
+			inst.printer.StepFail(fmt.Sprintf("Failed to store %s: %v", secretName, err))
+			return fmt.Errorf("storing secret %s: %w", secretName, err)
+		}
+
+		inst.printer.StepDone(fmt.Sprintf("Stored %s", secretName))
+	}
+
+	return nil
 }
 
 // writeConfigFiles writes config.yaml, the reusable workflow, and CODEOWNERS
@@ -356,6 +399,11 @@ func (inst *Installer) printSummary(org string, result *Result) {
 		items = append(items, fmt.Sprintf("Enrollment PRs: %d", len(result.Proposals)))
 	}
 
+	for _, agent := range result.Config.Agents {
+		items = append(items, fmt.Sprintf("Secret stored: FULLSEND_%s_APP_PRIVATE_KEY",
+			strings.ToUpper(agent.Role)))
+	}
+
 	items = append(items, "Auto-merge: disabled (safe default)")
 
 	inst.printer.Summary("Installation complete", items)
@@ -371,14 +419,6 @@ func (inst *Installer) printSummary(org string, result *Result) {
 		inst.printer.StepInfo("Nothing changes until a PR is merged.")
 		inst.printer.Blank()
 	}
-
-	inst.printer.Header("Next steps")
-	inst.printer.Blank()
-	inst.printer.StepInfo(fmt.Sprintf("Store each agent's private key as a secret in %s/.fullsend", org))
-	for _, agent := range result.Config.Agents {
-		inst.printer.StepInfo(fmt.Sprintf("  Secret: FULLSEND_%s_APP_PRIVATE_KEY", strings.ToUpper(agent.Role)))
-	}
-	inst.printer.Blank()
 }
 
 // validateOrgName checks that the organization name is valid for GitHub.

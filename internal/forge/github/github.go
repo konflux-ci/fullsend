@@ -4,6 +4,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
+	"golang.org/x/crypto/nacl/box"
 )
 
 const (
@@ -146,6 +148,53 @@ func (c *LiveClient) GetAuthenticatedUser(ctx context.Context) (string, error) {
 	}
 
 	return user.Login, nil
+}
+
+// CreateRepoSecret creates or updates an Actions secret on a repository.
+// It fetches the repo's public key, encrypts the value with libsodium's
+// sealed box, and PUTs the encrypted value to the Actions secrets API.
+func (c *LiveClient) CreateRepoSecret(ctx context.Context, owner, repo, name, value string) error {
+	// Step 1: Get the repo's public key for secret encryption
+	keyURL := fmt.Sprintf("%s/repos/%s/%s/actions/secrets/public-key",
+		c.baseURL, url.PathEscape(owner), url.PathEscape(repo))
+
+	var pubKey struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	if err := c.get(ctx, keyURL, &pubKey); err != nil {
+		return fmt.Errorf("getting repo public key: %w", err)
+	}
+
+	// Step 2: Decode the public key from base64
+	keyBytes, err := base64.StdEncoding.DecodeString(pubKey.Key)
+	if err != nil {
+		return fmt.Errorf("decoding public key: %w", err)
+	}
+	if len(keyBytes) != 32 {
+		return fmt.Errorf("unexpected public key length: %d (expected 32)", len(keyBytes))
+	}
+
+	var recipientKey [32]byte
+	copy(recipientKey[:], keyBytes)
+
+	// Step 3: Encrypt the value using libsodium sealed box
+	encrypted, err := box.SealAnonymous(nil, []byte(value), &recipientKey, rand.Reader)
+	if err != nil {
+		return fmt.Errorf("encrypting secret: %w", err)
+	}
+
+	// Step 4: PUT the encrypted secret
+	secretURL := fmt.Sprintf("%s/repos/%s/%s/actions/secrets/%s",
+		c.baseURL, url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(name))
+
+	body := map[string]string{
+		"encrypted_value": base64.StdEncoding.EncodeToString(encrypted),
+		"key_id":          pubKey.KeyID,
+	}
+
+	var result json.RawMessage
+	return c.put(ctx, secretURL, body, &result)
 }
 
 // CreateBranch creates a new branch from the default branch's HEAD.
