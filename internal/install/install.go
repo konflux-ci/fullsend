@@ -113,10 +113,19 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Step 4: Create .fullsend repo (or skip if it already exists)
+	// Step 4: Create .fullsend repo if needed, then write config files
 	if discovered.ConfigRepoExists {
-		inst.printer.StepDone(".fullsend repository already exists — skipping creation")
-	} else if err := inst.createConfigRepo(ctx, opts.Org, result); err != nil {
+		inst.printer.StepDone(".fullsend repository already exists")
+	} else {
+		inst.printer.StepStart("Creating .fullsend repository...")
+		if _, repoErr := inst.client.CreateRepo(ctx, opts.Org, ".fullsend",
+			"Fullsend agent configuration for "+opts.Org, true); repoErr != nil {
+			inst.printer.StepFail("Failed to create .fullsend repository")
+			return nil, fmt.Errorf("creating .fullsend repo: %w", repoErr)
+		}
+	}
+
+	if err := inst.writeConfigFiles(ctx, opts.Org, result, !discovered.ConfigRepoExists); err != nil {
 		return nil, err
 	}
 
@@ -186,20 +195,14 @@ func (inst *Installer) generateConfig(repos []string, opts Options) *config.OrgC
 	return cfg
 }
 
-func (inst *Installer) createConfigRepo(ctx context.Context, org string, result *Result) error {
-	inst.printer.StepStart("Creating .fullsend repository...")
+// writeConfigFiles writes config.yaml, the reusable workflow, and CODEOWNERS
+// into the .fullsend repo. If newRepo is true, the first file creation is
+// retried with backoff to wait for GitHub to finish initializing the branch.
+// If files already exist, creation will fail with a 422 — this is logged
+// and skipped so the command is idempotent.
+func (inst *Installer) writeConfigFiles(ctx context.Context, org string, result *Result, newRepo bool) error {
+	inst.printer.StepStart("Writing configuration files...")
 
-	_, err := inst.client.CreateRepo(ctx, org, ".fullsend",
-		"Fullsend agent configuration for "+org, true)
-	if err != nil {
-		inst.printer.StepFail("Failed to create .fullsend repository")
-		return fmt.Errorf("creating .fullsend repo: %w", err)
-	}
-
-	// Write files sequentially — each CreateFile call creates a commit,
-	// so we must wait for each to complete before creating the next.
-	// The first call may need retries because GitHub hasn't finished
-	// initializing the repo's default branch yet.
 	configData, err := result.Config.Marshal()
 	if err != nil {
 		return fmt.Errorf("marshalling config: %w", err)
@@ -216,10 +219,10 @@ func (inst *Installer) createConfigRepo(ctx context.Context, org string, result 
 
 	for i, f := range files {
 		var createErr error
-		// Retry the first file with backoff — GitHub may not have finished
-		// initializing the default branch after repo creation.
+		// Retry the first file with backoff on a new repo — GitHub may
+		// not have finished initializing the default branch.
 		maxAttempts := 1
-		if i == 0 {
+		if i == 0 && newRepo {
 			maxAttempts = 5
 		}
 
@@ -240,13 +243,28 @@ func (inst *Installer) createConfigRepo(ctx context.Context, org string, result 
 		}
 
 		if createErr != nil {
+			// 422 typically means the file already exists — skip it
+			if isAlreadyExistsError(createErr) {
+				inst.printer.StepInfo(fmt.Sprintf("%s already exists — skipping", f.path))
+				continue
+			}
 			inst.printer.StepFail(fmt.Sprintf("Failed to create %s: %v", f.path, createErr))
 			return fmt.Errorf("creating %s: %w", f.path, createErr)
 		}
 	}
 
-	inst.printer.StepDone("Created .fullsend repository with config and workflows")
+	inst.printer.StepDone("Configuration files written to .fullsend")
 	return nil
+}
+
+// isAlreadyExistsError checks if the error is a 422 "already exists" from
+// the GitHub Contents API.
+func isAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "422") && strings.Contains(msg, "exists")
 }
 
 func (inst *Installer) createEnrollmentPRs(ctx context.Context, org string, result *Result) error {
