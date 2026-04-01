@@ -117,7 +117,10 @@ func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
 	s.printer.Blank()
 
 	// Step 1: Create the app via manifest flow
-	if err := s.prompt.WaitForEnter("Press [Enter] to open the GitHub App creation page..."); err != nil {
+	s.printer.StepInfo("We need you to create a GitHub App.")
+	s.printer.Blank()
+
+	if err := s.prompt.WaitForEnter("Press [Enter] to be taken to the app creation flow..."); err != nil {
 		return nil, fmt.Errorf("waiting for user: %w", err)
 	}
 
@@ -133,19 +136,21 @@ func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
 	s.printer.Blank()
 
 	// Step 2: Install the app on the organization
-	s.printer.StepInfo("Now the app needs to be installed on your organization.")
+	s.printer.StepInfo("Now we need you to install that app on your organization.")
 	s.printer.StepInfo("This grants it access to the repos you choose.")
 	s.printer.Blank()
 
-	if promptErr := s.prompt.WaitForEnter("Press [Enter] to open the installation page..."); promptErr != nil {
+	if promptErr := s.prompt.WaitForEnter("Press [Enter] to be taken to the app installation page..."); promptErr != nil {
 		return nil, fmt.Errorf("waiting for user: %w", promptErr)
 	}
 
-	installURL := fmt.Sprintf("%s/apps/%s/installations/new/permissions?target_id=0",
+	installURL := fmt.Sprintf("%s/apps/%s/installations/new",
 		s.webURL, creds.Slug)
 	if openErr := s.browser.Open(ctx, installURL); openErr != nil {
 		s.printer.StepWarn("Could not open browser automatically")
 		s.printer.StepInfo(fmt.Sprintf("Open this URL manually: %s", installURL))
+	} else {
+		s.printer.StepInfo("Opened installation page in your browser.")
 	}
 
 	s.printer.StepInfo("Complete the installation in your browser, then return here.")
@@ -249,9 +254,12 @@ func (s *Setup) createAppViaManifest(ctx context.Context, org string) (*AppCrede
 	if err := s.browser.Open(ctx, localURL); err != nil {
 		s.printer.StepWarn("Could not open browser automatically")
 		s.printer.StepInfo(fmt.Sprintf("Open this URL manually: %s", localURL))
+	} else {
+		s.printer.StepInfo("Opened app creation flow in your browser.")
 	}
 
-	s.printer.StepInfo("Waiting for GitHub App creation in your browser...")
+	s.printer.StepInfo("Name the app and click \"Create GitHub App\", then return here.")
+	s.printer.StepInfo("Waiting for you to finish...")
 
 	// Wait for the code or an error
 	var code string
