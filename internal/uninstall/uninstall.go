@@ -94,36 +94,45 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 	un.printer.Header(fmt.Sprintf("Uninstalling fullsend from %s", opts.Org))
 	un.printer.Blank()
 
-	// Step 0: Confirm with the user (unless --yolo)
+	// Step 0: Verify .fullsend repo exists by reading config
+	un.printer.StepStart("Reading configuration from .fullsend repo...")
+
+	appSlug, err := un.readAppSlug(ctx, opts.Org)
+	if err != nil {
+		un.printer.StepFail(fmt.Sprintf("Could not read %s/.fullsend/config.yaml", opts.Org))
+		un.printer.Blank()
+		un.printer.ErrorBox("Nothing to uninstall",
+			fmt.Sprintf("The .fullsend repository does not exist in %s, or its config.yaml\n"+
+				"  is missing or unreadable. fullsend does not appear to be installed.\n\n"+
+				"  If you need to clean up manually, check:\n"+
+				"    %s/organizations/%s/settings/installations\n"+
+				"    %s/organizations/%s/settings/apps",
+				opts.Org, un.webURL, opts.Org, un.webURL, opts.Org))
+		return fmt.Errorf(".fullsend repo not found in %s — nothing to uninstall", opts.Org)
+	}
+	un.printer.StepDone(fmt.Sprintf("Found app: %s", appSlug))
+
+	// Step 1: Confirm with the user (unless --yolo)
 	if !opts.Yolo {
+		un.printer.Blank()
 		un.printer.StepWarn("This will permanently delete:")
 		un.printer.StepInfo(fmt.Sprintf("  • The %s/.fullsend repository and all its contents", opts.Org))
-		un.printer.StepInfo(fmt.Sprintf("  • The fullsend GitHub App installation on %s", opts.Org))
+		un.printer.StepInfo(fmt.Sprintf("  • The %s GitHub App installation on %s", appSlug, opts.Org))
+		un.printer.StepInfo(fmt.Sprintf("  • The %s app registration", appSlug))
 		un.printer.Blank()
 
-		confirmed, err := un.prompt.ConfirmWithInput(
+		confirmed, confirmErr := un.prompt.ConfirmWithInput(
 			fmt.Sprintf("Type the organization name (%s) to confirm: ", opts.Org),
 			opts.Org,
 		)
-		if err != nil {
-			return fmt.Errorf("reading confirmation: %w", err)
+		if confirmErr != nil {
+			return fmt.Errorf("reading confirmation: %w", confirmErr)
 		}
 		if !confirmed {
 			un.printer.StepInfo("Aborted.")
 			return nil
 		}
 		un.printer.Blank()
-	}
-
-	// Step 1: Read app slug from .fullsend/config.yaml
-	un.printer.StepStart("Reading configuration from .fullsend repo...")
-
-	appSlug, err := un.readAppSlug(ctx, opts.Org)
-	if err != nil {
-		un.printer.StepWarn(fmt.Sprintf("Could not read app slug from config: %v", err))
-		un.printer.StepInfo("Will attempt to find the app from org installations instead.")
-	} else {
-		un.printer.StepDone(fmt.Sprintf("Found app: %s", appSlug))
 	}
 
 	// Step 2: Check token scopes to see if we can delete via API
@@ -143,19 +152,7 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 		_ = deleteErr
 	}
 
-	// Step 4: Find the app if we don't have it from config
-	if appSlug == "" {
-		appSlug, err = un.findFullsendApp(ctx, opts.Org)
-		if err != nil || appSlug == "" {
-			un.printer.StepWarn("Could not determine the fullsend app to uninstall")
-			un.printer.StepInfo("Check your org's installed apps manually:")
-			un.printer.StepInfo(fmt.Sprintf("  %s/organizations/%s/settings/installations", un.webURL, opts.Org))
-			un.printer.Blank()
-			return nil
-		}
-	}
-
-	// Step 5: Uninstall the app (browser flow — API requires app JWT)
+	// Step 4: Uninstall the app (browser flow — API requires app JWT)
 	if err := un.uninstallApp(ctx, opts.Org, appSlug); err != nil {
 		// Non-fatal
 		_ = err
@@ -348,22 +345,6 @@ func (un *Uninstaller) readAppSlug(ctx context.Context, org string) (string, err
 	}
 
 	return cfg.App.Slug, nil
-}
-
-// findFullsendApp scans org installations for an app with a "fullsend" prefix.
-func (un *Uninstaller) findFullsendApp(ctx context.Context, org string) (string, error) {
-	installations, err := un.listInstallations(ctx, org)
-	if err != nil {
-		return "", err
-	}
-
-	for _, inst := range installations {
-		if strings.HasPrefix(inst.AppSlug, "fullsend") {
-			return inst.AppSlug, nil
-		}
-	}
-
-	return "", nil
 }
 
 type orgInstallation struct {

@@ -144,6 +144,10 @@ func TestUninstall_NoDeleteScope_UsesBrowser(t *testing.T) {
 
 func TestUninstall_Aborted(t *testing.T) {
 	client := forge.NewFakeClient()
+	createErr := client.CreateFile(context.Background(), "my-org", ".fullsend", "config.yaml", "init",
+		[]byte("version: '1'\napp:\n  name: fullsend-my-org\n  slug: fullsend-my-org\n"))
+	require.NoError(t, createErr)
+
 	apiSrv := scopeServer("")
 	defer apiSrv.Close()
 
@@ -173,7 +177,7 @@ func TestUninstall_Yolo(t *testing.T) {
 	assert.Len(t, client.DeletedRepos, 1)
 }
 
-func TestUninstall_ConfigReadFails_FallsBackToScan(t *testing.T) {
+func TestUninstall_NoConfigRepo_Aborts(t *testing.T) {
 	client := forge.NewFakeClient()
 	client.Errors["GetFileContent"] = errors.New("not found")
 
@@ -182,11 +186,12 @@ func TestUninstall_ConfigReadFails_FallsBackToScan(t *testing.T) {
 
 	un, output, _ := newTestUninstaller(t, client, apiSrv, true)
 
-	runErr := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
-	require.NoError(t, runErr)
-
-	assert.Contains(t, output.String(), "Could not read app slug")
-	assert.Contains(t, output.String(), "fullsend-my-org")
+	err := un.Run(context.Background(), Options{Org: "my-org", Yolo: true})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing to uninstall")
+	assert.Contains(t, output.String(), "Nothing to uninstall")
+	// Should NOT have tried to delete anything
+	assert.Empty(t, client.DeletedRepos)
 }
 
 func TestUninstall_AppInstallBrowser(t *testing.T) {
