@@ -57,6 +57,7 @@ type Result struct {
 	DefaultBranches map[string]string
 	ConfigRepo      string
 	OrgRepos        []string
+	SecretsStored   int
 }
 
 // Installer performs the fullsend installation workflow.
@@ -149,9 +150,11 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	// Step 6: Store agent PEM keys as repo secrets
-	if err := inst.storeAgentSecrets(ctx, opts.Org, opts.Agents); err != nil {
-		return nil, err
+	secretsStored, storeErr := inst.storeAgentSecrets(ctx, opts.Org, opts.Agents)
+	if storeErr != nil {
+		return nil, storeErr
 	}
+	result.SecretsStored = secretsStored
 
 	// Step 7: Create PRs for enabled repos
 	if err := inst.createEnrollmentPRs(ctx, opts.Org, result); err != nil {
@@ -227,14 +230,32 @@ func (inst *Installer) generateConfig(repos []string, opts Options) *config.OrgC
 	return cfg
 }
 
-func (inst *Installer) storeAgentSecrets(ctx context.Context, org string, agents []AgentCredentials) error {
-	if len(agents) == 0 {
-		return nil
+// storeAgentSecrets stores each agent's PEM key as a repo secret.
+// Returns the number of secrets actually stored (0 if PEM keys are empty,
+// which happens when reusing existing apps).
+func (inst *Installer) storeAgentSecrets(ctx context.Context, org string, agents []AgentCredentials) (int, error) {
+	// Check if any agents have PEM keys to store
+	hasPEMs := false
+	for _, a := range agents {
+		if a.PEM != "" {
+			hasPEMs = true
+			break
+		}
+	}
+
+	if !hasPEMs {
+		if len(agents) > 0 {
+			inst.printer.StepInfo("Agent apps were reused from a previous install — PEM keys are only")
+			inst.printer.StepInfo("available at creation time. Secrets were not updated.")
+			inst.printer.StepInfo("To rotate secrets, delete and recreate the apps.")
+		}
+		return 0, nil
 	}
 
 	inst.printer.Header("Storing agent secrets")
 	inst.printer.Blank()
 
+	stored := 0
 	for _, agent := range agents {
 		if agent.PEM == "" {
 			continue
@@ -245,13 +266,14 @@ func (inst *Installer) storeAgentSecrets(ctx context.Context, org string, agents
 
 		if err := inst.client.CreateRepoSecret(ctx, org, ".fullsend", secretName, agent.PEM); err != nil {
 			inst.printer.StepFail(fmt.Sprintf("Failed to store %s: %v", secretName, err))
-			return fmt.Errorf("storing secret %s: %w", secretName, err)
+			return stored, fmt.Errorf("storing secret %s: %w", secretName, err)
 		}
 
 		inst.printer.StepDone(fmt.Sprintf("Stored %s", secretName))
+		stored++
 	}
 
-	return nil
+	return stored, nil
 }
 
 // writeConfigFiles writes config.yaml, the reusable workflow, and CODEOWNERS
@@ -399,9 +421,8 @@ func (inst *Installer) printSummary(org string, result *Result) {
 		items = append(items, fmt.Sprintf("Enrollment PRs: %d", len(result.Proposals)))
 	}
 
-	for _, agent := range result.Config.Agents {
-		items = append(items, fmt.Sprintf("Secret stored: FULLSEND_%s_APP_PRIVATE_KEY",
-			strings.ToUpper(agent.Role)))
+	if result.SecretsStored > 0 {
+		items = append(items, fmt.Sprintf("Secrets stored: %d", result.SecretsStored))
 	}
 
 	items = append(items, "Auto-merge: disabled (safe default)")
