@@ -97,6 +97,8 @@ Examples:
 			}
 			printer.StepDone(fmt.Sprintf("Authenticated via %s", source))
 
+			var appName, appSlug string
+
 			// Step 1: GitHub App creation and installation
 			if !skipApp {
 				setup := appsetup.New(
@@ -106,10 +108,13 @@ Examples:
 					token,
 				)
 
-				appCreds, err := setup.Run(cmd.Context(), org)
-				if err != nil {
-					return fmt.Errorf("app setup: %w", err)
+				appCreds, setupErr := setup.Run(cmd.Context(), org)
+				if setupErr != nil {
+					return fmt.Errorf("app setup: %w", setupErr)
 				}
+
+				appName = appCreds.Name
+				appSlug = appCreds.Slug
 
 				printer.StepInfo(fmt.Sprintf("App PEM key has %d bytes — store it as a repo secret",
 					len(appCreds.PEM)))
@@ -121,9 +126,11 @@ Examples:
 
 			inst := install.New(client, printer)
 			_, err := inst.Run(cmd.Context(), install.Options{
-				Org:    org,
-				Repos:  repos,
-				Agents: agents,
+				Org:     org,
+				AppName: appName,
+				AppSlug: appSlug,
+				Repos:   repos,
+				Agents:  agents,
 			})
 			return err
 		},

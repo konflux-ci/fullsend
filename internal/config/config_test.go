@@ -10,7 +10,7 @@ import (
 
 func TestNewOrgConfig_Defaults(t *testing.T) {
 	repos := []string{"api", "web", "docs"}
-	cfg := NewOrgConfig(repos, nil, nil)
+	cfg := NewOrgConfig(repos, nil, nil, "", "")
 
 	assert.Equal(t, "1", cfg.Version)
 	assert.Equal(t, "github-actions", cfg.Dispatch.Platform)
@@ -31,7 +31,7 @@ func TestNewOrgConfig_EnabledRepos(t *testing.T) {
 	repos := []string{"api", "web", "docs"}
 	enabled := []string{"api", "docs"}
 
-	cfg := NewOrgConfig(repos, enabled, nil)
+	cfg := NewOrgConfig(repos, enabled, nil, "", "")
 
 	assert.True(t, cfg.Repos["api"].Enabled)
 	assert.False(t, cfg.Repos["web"].Enabled)
@@ -39,13 +39,13 @@ func TestNewOrgConfig_EnabledRepos(t *testing.T) {
 }
 
 func TestNewOrgConfig_CustomAgents(t *testing.T) {
-	cfg := NewOrgConfig(nil, nil, []string{"review", "implementation"})
+	cfg := NewOrgConfig(nil, nil, []string{"review", "implementation"}, "", "")
 
 	assert.Equal(t, []string{"review", "implementation"}, cfg.Defaults.Agents)
 }
 
 func TestNewOrgConfig_EmptyRepos(t *testing.T) {
-	cfg := NewOrgConfig(nil, nil, nil)
+	cfg := NewOrgConfig(nil, nil, nil, "", "")
 
 	assert.Empty(t, cfg.Repos)
 	assert.Equal(t, DefaultAgents(), cfg.Defaults.Agents)
@@ -79,7 +79,7 @@ func TestOrgConfig_EnabledRepos_NoneEnabled(t *testing.T) {
 }
 
 func TestOrgConfig_Marshal(t *testing.T) {
-	cfg := NewOrgConfig([]string{"api", "web"}, []string{"api"}, nil)
+	cfg := NewOrgConfig([]string{"api", "web"}, []string{"api"}, nil, "my-app", "my-app")
 
 	data, err := cfg.Marshal()
 	require.NoError(t, err)
@@ -95,13 +95,15 @@ func TestOrgConfig_Marshal(t *testing.T) {
 
 	assert.Equal(t, "1", parsed.Version)
 	assert.Equal(t, "github-actions", parsed.Dispatch.Platform)
+	assert.Equal(t, "my-app", parsed.App.Name)
+	assert.Equal(t, "my-app", parsed.App.Slug)
 	assert.False(t, parsed.Defaults.AutoMerge)
 	assert.True(t, parsed.Repos["api"].Enabled)
 	assert.False(t, parsed.Repos["web"].Enabled)
 }
 
 func TestOrgConfig_Validate_Valid(t *testing.T) {
-	cfg := NewOrgConfig([]string{"api"}, nil, nil)
+	cfg := NewOrgConfig([]string{"api"}, nil, nil, "", "")
 	assert.NoError(t, cfg.Validate())
 }
 
@@ -155,6 +157,27 @@ func TestOrgConfig_Validate_InvalidAgent(t *testing.T) {
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown agent role")
+}
+
+func TestNewOrgConfig_AppIdentity(t *testing.T) {
+	cfg := NewOrgConfig(nil, nil, nil, "my-custom-app", "my-custom-app")
+
+	assert.Equal(t, "my-custom-app", cfg.App.Name)
+	assert.Equal(t, "my-custom-app", cfg.App.Slug)
+}
+
+func TestNewOrgConfig_AppIdentityInMarshal(t *testing.T) {
+	cfg := NewOrgConfig([]string{"api"}, nil, nil, "renamed-app", "renamed-app")
+
+	data, err := cfg.Marshal()
+	require.NoError(t, err)
+
+	var parsed OrgConfig
+	err = yaml.Unmarshal(data, &parsed)
+	require.NoError(t, err)
+
+	assert.Equal(t, "renamed-app", parsed.App.Name)
+	assert.Equal(t, "renamed-app", parsed.App.Slug)
 }
 
 func TestDefaultAgents(t *testing.T) {

@@ -21,11 +21,24 @@ type OrgConfig struct {
 	// Version of the config schema.
 	Version string `yaml:"version"`
 
+	// App is the name/slug of the GitHub App managing this organization.
+	// Set during install from the app the user actually created.
+	App AppIdentity `yaml:"app"`
+
 	// Dispatch configures the execution platform for agents.
 	Dispatch DispatchConfig `yaml:"dispatch"`
 
 	// Defaults apply to all repos unless overridden.
 	Defaults RepoDefaults `yaml:"defaults"`
+}
+
+// AppIdentity records which GitHub App is managing this organization.
+type AppIdentity struct {
+	// Name is the display name of the app.
+	Name string `yaml:"name"`
+
+	// Slug is the URL-friendly identifier (used in installation URLs).
+	Slug string `yaml:"slug"`
 }
 
 // DispatchConfig specifies the agent execution platform.
@@ -63,7 +76,10 @@ func DefaultAgents() []string {
 
 // NewOrgConfig creates a new OrgConfig with safe defaults.
 // All discovered repos are listed but disabled by default.
-func NewOrgConfig(repos []string, enabledRepos []string, agents []string) *OrgConfig {
+// appName and appSlug identify the GitHub App; if empty, they default
+// to "fullsend-<org>" style names (but prefer passing the real values
+// from the app creation flow).
+func NewOrgConfig(repos []string, enabledRepos []string, agents []string, appName, appSlug string) *OrgConfig {
 	if len(agents) == 0 {
 		agents = DefaultAgents()
 	}
@@ -82,6 +98,10 @@ func NewOrgConfig(repos []string, enabledRepos []string, agents []string) *OrgCo
 
 	return &OrgConfig{
 		Version: "1",
+		App: AppIdentity{
+			Name: appName,
+			Slug: appSlug,
+		},
 		Dispatch: DispatchConfig{
 			Platform: "github-actions",
 		},

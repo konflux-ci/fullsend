@@ -29,6 +29,14 @@ type Options struct {
 	// Org is the GitHub organization to install fullsend into.
 	Org string
 
+	// AppName is the display name of the GitHub App (from the creation flow).
+	// If empty, defaults to "fullsend-<org>".
+	AppName string
+
+	// AppSlug is the URL-friendly name of the GitHub App (from the creation flow).
+	// If empty, defaults to "fullsend-<org>".
+	AppSlug string
+
 	// Repos is the list of repos to enable during installation.
 	// If empty, all repos are listed but none are enabled.
 	Repos []string
@@ -100,7 +108,7 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	// Step 2: Configure the GitHub App
-	result.AppConfig = inst.configureApp(opts.Org)
+	result.AppConfig = inst.configureApp(opts)
 
 	// Step 3: Generate config
 	result.Config = inst.generateConfig(repos, opts)
@@ -149,11 +157,15 @@ func (inst *Installer) discoverRepos(ctx context.Context, org string) ([]string,
 	return names, defaultBranches, nil
 }
 
-func (inst *Installer) configureApp(org string) *forgegithub.AppConfig {
-	appConfig := forgegithub.DefaultAppConfig(org)
+func (inst *Installer) configureApp(opts Options) *forgegithub.AppConfig {
+	appConfig := forgegithub.DefaultAppConfig(opts.Org)
 
-	inst.printer.StepDone("GitHub App configured")
-	inst.printer.StepInfo(fmt.Sprintf("name: %s", appConfig.Name))
+	// Use the actual app name from the creation flow if provided
+	if opts.AppName != "" {
+		appConfig.Name = opts.AppName
+	}
+
+	inst.printer.StepDone(fmt.Sprintf("GitHub App: %s", appConfig.Name))
 	inst.printer.StepInfo(fmt.Sprintf("permissions: issues=%s, prs=%s, checks=%s, contents=%s",
 		appConfig.Permissions.Issues,
 		appConfig.Permissions.PullReqs,
@@ -164,7 +176,15 @@ func (inst *Installer) configureApp(org string) *forgegithub.AppConfig {
 }
 
 func (inst *Installer) generateConfig(repos []string, opts Options) *config.OrgConfig {
-	cfg := config.NewOrgConfig(repos, opts.Repos, opts.Agents)
+	appName := opts.AppName
+	appSlug := opts.AppSlug
+	if appName == "" {
+		appName = "fullsend-" + opts.Org
+	}
+	if appSlug == "" {
+		appSlug = "fullsend-" + opts.Org
+	}
+	cfg := config.NewOrgConfig(repos, opts.Repos, opts.Agents, appName, appSlug)
 
 	enabledCount := len(cfg.EnabledRepos())
 	inst.printer.StepDone(fmt.Sprintf("Configuration generated (%d/%d repos enabled)",
