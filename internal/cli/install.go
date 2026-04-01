@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fullsend-ai/fullsend/internal/appsetup"
+	"github.com/fullsend-ai/fullsend/internal/config"
 	forgegithub "github.com/fullsend-ai/fullsend/internal/forge/github"
 	"github.com/fullsend-ai/fullsend/internal/install"
 	"github.com/fullsend-ai/fullsend/internal/ui"
@@ -18,7 +19,7 @@ import (
 func newInstallCmd() *cobra.Command {
 	var (
 		repos   []string
-		agents  []string
+		roles   []string
 		dryRun  bool
 		skipApp bool
 	)
@@ -26,15 +27,16 @@ func newInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install <org>",
 		Short: "Install fullsend to a GitHub organization",
-		Long: `Install fullsend to a GitHub organization by creating a GitHub App,
-a .fullsend configuration repository with safe defaults, and enrollment
-PRs for any repos you want to enable.
+		Long: `Install fullsend to a GitHub organization by creating GitHub Apps
+for each agent role, a .fullsend configuration repository with safe
+defaults, and enrollment PRs for any repos you want to enable.
 
-The install command walks you through:
-  1. Creating a GitHub App with the right permissions (opens browser)
-  2. Installing the app on your organization (opens browser)
-  3. Creating a .fullsend config repo with safe defaults
-  4. Creating enrollment PRs for any repos you enable
+Each agent role gets its own GitHub App with least-privilege permissions:
+  - triage: issues read/write (labels, assigns, triages)
+  - coder:  contents write, PRs write, checks read (pushes code)
+  - review: PRs write, contents read, checks read (reviews code)
+
+The install command walks you through creating and installing each app.
 
 Requires a GitHub token with these scopes:
   - repo (to create repos, branches, files, and PRs)
@@ -49,13 +51,16 @@ Nothing gets automatically merged as a result of installation.
 Repos receive PRs that must be reviewed and merged to take effect.
 
 Examples:
-  # Full install with interactive app creation
+  # Full install with all three agents
   fullsend install my-org
+
+  # Install with only specific agents
+  fullsend install my-org --agents triage,review
 
   # Install and enable a specific repo
   fullsend install my-org --repo cool-project
 
-  # Skip app creation (if the app already exists)
+  # Skip app creation (if apps already exist)
   fullsend install my-org --skip-app-setup --repo cool-project
 
   # Dry run to preview what would happen
@@ -65,20 +70,22 @@ Examples:
 			org := args[0]
 			printer := ui.DefaultPrinter()
 
+			// Resolve roles
+			activeRoles := roles
+			if len(activeRoles) == 0 {
+				activeRoles = forgegithub.DefaultAgentRoles()
+			}
+
 			if dryRun {
 				printer.Banner()
 				printer.Header(fmt.Sprintf("Dry run: install fullsend to %s", org))
 				printer.Blank()
 				printer.StepDone(fmt.Sprintf("Organization: %s", org))
+				printer.StepDone(fmt.Sprintf("Agent roles: %s", strings.Join(activeRoles, ", ")))
 				if len(repos) > 0 {
 					printer.StepDone(fmt.Sprintf("Repos to enable: %v", repos))
 				} else {
 					printer.StepInfo("No repos specified — all will be listed but disabled")
-				}
-				if len(agents) > 0 {
-					printer.StepDone(fmt.Sprintf("Agents: %v", agents))
-				} else {
-					printer.StepDone("Agents: triage, implementation, review (defaults)")
 				}
 				printer.Blank()
 				printer.StepInfo("Re-run without --dry-run to proceed.")
@@ -97,10 +104,14 @@ Examples:
 			}
 			printer.StepDone(fmt.Sprintf("Authenticated via %s", source))
 
-			var appName, appSlug string
+			var agentEntries []config.AgentEntry
 
-			// Step 1: GitHub App creation and installation
+			// Step 1: Create and install GitHub Apps for each agent role
 			if !skipApp {
+				printer.Blank()
+				printer.Header(fmt.Sprintf("Setting up %d agent apps", len(activeRoles)))
+				printer.Blank()
+
 				setup := appsetup.New(
 					printer,
 					appsetup.StdinPrompter{},
@@ -108,17 +119,22 @@ Examples:
 					token,
 				)
 
-				appCreds, setupErr := setup.Run(cmd.Context(), org)
-				if setupErr != nil {
-					return fmt.Errorf("app setup: %w", setupErr)
+				for _, role := range activeRoles {
+					creds, setupErr := setup.Run(cmd.Context(), org, role)
+					if setupErr != nil {
+						return fmt.Errorf("app setup for %s agent: %w", role, setupErr)
+					}
+
+					agentEntries = append(agentEntries, config.AgentEntry{
+						Role: role,
+						Name: creds.Name,
+						Slug: creds.Slug,
+					})
+
+					printer.StepInfo(fmt.Sprintf("PEM key for %s has %d bytes — store as repo secret",
+						role, len(creds.PEM)))
+					printer.Blank()
 				}
-
-				appName = appCreds.Name
-				appSlug = appCreds.Slug
-
-				printer.StepInfo(fmt.Sprintf("App PEM key has %d bytes — store it as a repo secret",
-					len(appCreds.PEM)))
-				printer.Blank()
 			}
 
 			// Step 2: Create config repo and enrollment PRs
@@ -126,11 +142,10 @@ Examples:
 
 			inst := install.New(client, printer)
 			_, err := inst.Run(cmd.Context(), install.Options{
-				Org:     org,
-				AppName: appName,
-				AppSlug: appSlug,
-				Repos:   repos,
-				Agents:  agents,
+				Org:    org,
+				Agents: agentEntries,
+				Roles:  activeRoles,
+				Repos:  repos,
 			})
 			return err
 		},
@@ -138,12 +153,12 @@ Examples:
 
 	cmd.Flags().StringSliceVar(&repos, "repo", nil,
 		"Repository to enable during installation (can be repeated)")
-	cmd.Flags().StringSliceVar(&agents, "agents", nil,
-		"Agent roles to enable (comma-separated: triage,implementation,review)")
+	cmd.Flags().StringSliceVar(&roles, "agents", nil,
+		"Agent roles to enable (comma-separated: triage,coder,review)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Preview what would happen without making changes")
 	cmd.Flags().BoolVar(&skipApp, "skip-app-setup", false,
-		"Skip GitHub App creation (use if the app already exists)")
+		"Skip GitHub App creation (use if the apps already exist)")
 
 	return cmd
 }

@@ -17,10 +17,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/fullsend-ai/fullsend/internal/config"
 	"github.com/fullsend-ai/fullsend/internal/forge"
-	forgegithub "github.com/fullsend-ai/fullsend/internal/forge/github"
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
 
@@ -29,27 +29,22 @@ type Options struct {
 	// Org is the GitHub organization to install fullsend into.
 	Org string
 
-	// AppName is the display name of the GitHub App (from the creation flow).
-	// If empty, defaults to "fullsend-<org>".
-	AppName string
+	// Agents holds the credentials for each agent app created during setup.
+	// Each entry maps a role to its app name and slug.
+	Agents []config.AgentEntry
 
-	// AppSlug is the URL-friendly name of the GitHub App (from the creation flow).
-	// If empty, defaults to "fullsend-<org>".
-	AppSlug string
+	// Roles is the list of agent roles to enable.
+	// If empty, the default set (triage, coder, review) is used.
+	Roles []string
 
 	// Repos is the list of repos to enable during installation.
 	// If empty, all repos are listed but none are enabled.
 	Repos []string
-
-	// Agents is the list of agent roles to enable.
-	// If empty, the default set (triage, implementation, review) is used.
-	Agents []string
 }
 
 // Result holds the outcome of an install operation.
 type Result struct {
 	Config          *config.OrgConfig
-	AppConfig       *forgegithub.AppConfig
 	Proposals       map[string]*forge.ChangeProposal
 	DefaultBranches map[string]string
 	ConfigRepo      string
@@ -107,8 +102,8 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 
-	// Step 2: Configure the GitHub App
-	result.AppConfig = inst.configureApp(opts)
+	// Step 2: Log agent apps
+	inst.logAgentApps(opts)
 
 	// Step 3: Generate config
 	result.Config = inst.generateConfig(discovered.Names, opts)
@@ -168,34 +163,20 @@ func (inst *Installer) discoverRepos(ctx context.Context, org string) (*discover
 	return result, nil
 }
 
-func (inst *Installer) configureApp(opts Options) *forgegithub.AppConfig {
-	appConfig := forgegithub.DefaultAppConfig(opts.Org)
-
-	// Use the actual app name from the creation flow if provided
-	if opts.AppName != "" {
-		appConfig.Name = opts.AppName
+func (inst *Installer) logAgentApps(opts Options) {
+	if len(opts.Agents) == 0 {
+		inst.printer.StepInfo("No agent apps configured")
+		return
 	}
 
-	inst.printer.StepDone(fmt.Sprintf("GitHub App: %s", appConfig.Name))
-	inst.printer.StepInfo(fmt.Sprintf("permissions: issues=%s, prs=%s, checks=%s, contents=%s",
-		appConfig.Permissions.Issues,
-		appConfig.Permissions.PullReqs,
-		appConfig.Permissions.Checks,
-		appConfig.Permissions.Contents))
-
-	return appConfig
+	inst.printer.StepDone(fmt.Sprintf("%d agent apps configured", len(opts.Agents)))
+	for _, a := range opts.Agents {
+		inst.printer.StepInfo(fmt.Sprintf("  %s: %s", a.Role, a.Name))
+	}
 }
 
 func (inst *Installer) generateConfig(repos []string, opts Options) *config.OrgConfig {
-	appName := opts.AppName
-	appSlug := opts.AppSlug
-	if appName == "" {
-		appName = "fullsend-" + opts.Org
-	}
-	if appSlug == "" {
-		appSlug = "fullsend-" + opts.Org
-	}
-	cfg := config.NewOrgConfig(repos, opts.Repos, opts.Agents, appName, appSlug)
+	cfg := config.NewOrgConfig(repos, opts.Repos, opts.Roles, opts.Agents)
 
 	enabledCount := len(cfg.EnabledRepos())
 	inst.printer.StepDone(fmt.Sprintf("Configuration generated (%d/%d repos enabled)",
@@ -332,8 +313,10 @@ func (inst *Installer) printSummary(org string, result *Result) {
 
 	inst.printer.Header("Next steps")
 	inst.printer.Blank()
-	inst.printer.StepInfo(fmt.Sprintf("Store the GitHub App private key as a secret in %s/.fullsend", org))
-	inst.printer.StepInfo("  Secret name: FULLSEND_APP_PRIVATE_KEY")
+	inst.printer.StepInfo(fmt.Sprintf("Store each agent's private key as a secret in %s/.fullsend", org))
+	for _, agent := range result.Config.Agents {
+		inst.printer.StepInfo(fmt.Sprintf("  Secret: FULLSEND_%s_APP_PRIVATE_KEY", strings.ToUpper(agent.Role)))
+	}
 	inst.printer.Blank()
 }
 

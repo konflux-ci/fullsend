@@ -10,13 +10,13 @@ import (
 
 func TestNewOrgConfig_Defaults(t *testing.T) {
 	repos := []string{"api", "web", "docs"}
-	cfg := NewOrgConfig(repos, nil, nil, "", "")
+	cfg := NewOrgConfig(repos, nil, nil, nil)
 
 	assert.Equal(t, "1", cfg.Version)
 	assert.Equal(t, "github-actions", cfg.Dispatch.Platform)
 	assert.False(t, cfg.Defaults.AutoMerge, "auto_merge should default to false")
 	assert.Equal(t, 2, cfg.Defaults.MaxImplementationRetries)
-	assert.Equal(t, DefaultAgents(), cfg.Defaults.Agents)
+	assert.Equal(t, DefaultRoles(), cfg.Defaults.Roles)
 
 	// All repos should be listed but disabled
 	assert.Len(t, cfg.Repos, 3)
@@ -31,24 +31,24 @@ func TestNewOrgConfig_EnabledRepos(t *testing.T) {
 	repos := []string{"api", "web", "docs"}
 	enabled := []string{"api", "docs"}
 
-	cfg := NewOrgConfig(repos, enabled, nil, "", "")
+	cfg := NewOrgConfig(repos, enabled, nil, nil)
 
 	assert.True(t, cfg.Repos["api"].Enabled)
 	assert.False(t, cfg.Repos["web"].Enabled)
 	assert.True(t, cfg.Repos["docs"].Enabled)
 }
 
-func TestNewOrgConfig_CustomAgents(t *testing.T) {
-	cfg := NewOrgConfig(nil, nil, []string{"review", "implementation"}, "", "")
+func TestNewOrgConfig_CustomRoles(t *testing.T) {
+	cfg := NewOrgConfig(nil, nil, []string{"review", "coder"}, nil)
 
-	assert.Equal(t, []string{"review", "implementation"}, cfg.Defaults.Agents)
+	assert.Equal(t, []string{"review", "coder"}, cfg.Defaults.Roles)
 }
 
 func TestNewOrgConfig_EmptyRepos(t *testing.T) {
-	cfg := NewOrgConfig(nil, nil, nil, "", "")
+	cfg := NewOrgConfig(nil, nil, nil, nil)
 
 	assert.Empty(t, cfg.Repos)
-	assert.Equal(t, DefaultAgents(), cfg.Defaults.Agents)
+	assert.Equal(t, DefaultRoles(), cfg.Defaults.Roles)
 }
 
 func TestOrgConfig_EnabledRepos(t *testing.T) {
@@ -79,7 +79,11 @@ func TestOrgConfig_EnabledRepos_NoneEnabled(t *testing.T) {
 }
 
 func TestOrgConfig_Marshal(t *testing.T) {
-	cfg := NewOrgConfig([]string{"api", "web"}, []string{"api"}, nil, "my-app", "my-app")
+	agents := []AgentEntry{
+		{Role: "triage", Name: "fullsend-myorg-triage", Slug: "fullsend-myorg-triage"},
+		{Role: "coder", Name: "fullsend-myorg-coder", Slug: "fullsend-myorg-coder"},
+	}
+	cfg := NewOrgConfig([]string{"api", "web"}, []string{"api"}, nil, agents)
 
 	data, err := cfg.Marshal()
 	require.NoError(t, err)
@@ -95,22 +99,29 @@ func TestOrgConfig_Marshal(t *testing.T) {
 
 	assert.Equal(t, "1", parsed.Version)
 	assert.Equal(t, "github-actions", parsed.Dispatch.Platform)
-	assert.Equal(t, "my-app", parsed.App.Name)
-	assert.Equal(t, "my-app", parsed.App.Slug)
 	assert.False(t, parsed.Defaults.AutoMerge)
 	assert.True(t, parsed.Repos["api"].Enabled)
 	assert.False(t, parsed.Repos["web"].Enabled)
+
+	// Agents should round-trip through YAML
+	require.Len(t, parsed.Agents, 2)
+	assert.Equal(t, "triage", parsed.Agents[0].Role)
+	assert.Equal(t, "fullsend-myorg-triage", parsed.Agents[0].Name)
+	assert.Equal(t, "fullsend-myorg-triage", parsed.Agents[0].Slug)
+	assert.Equal(t, "coder", parsed.Agents[1].Role)
+	assert.Equal(t, "fullsend-myorg-coder", parsed.Agents[1].Name)
+	assert.Equal(t, "fullsend-myorg-coder", parsed.Agents[1].Slug)
 }
 
 func TestOrgConfig_Validate_Valid(t *testing.T) {
-	cfg := NewOrgConfig([]string{"api"}, nil, nil, "", "")
+	cfg := NewOrgConfig([]string{"api"}, nil, nil, nil)
 	assert.NoError(t, cfg.Validate())
 }
 
 func TestOrgConfig_Validate_MissingVersion(t *testing.T) {
 	cfg := &OrgConfig{
 		Dispatch: DispatchConfig{Platform: "github-actions"},
-		Defaults: RepoDefaults{Agents: DefaultAgents()},
+		Defaults: RepoDefaults{Roles: DefaultRoles()},
 	}
 
 	err := cfg.Validate()
@@ -122,7 +133,7 @@ func TestOrgConfig_Validate_InvalidPlatform(t *testing.T) {
 	cfg := &OrgConfig{
 		Version:  "1",
 		Dispatch: DispatchConfig{Platform: "kubernetes"},
-		Defaults: RepoDefaults{Agents: DefaultAgents()},
+		Defaults: RepoDefaults{Roles: DefaultRoles()},
 	}
 
 	err := cfg.Validate()
@@ -136,7 +147,7 @@ func TestOrgConfig_Validate_NegativeRetries(t *testing.T) {
 		Dispatch: DispatchConfig{Platform: "github-actions"},
 		Defaults: RepoDefaults{
 			MaxImplementationRetries: -1,
-			Agents:                   DefaultAgents(),
+			Roles:                    DefaultRoles(),
 		},
 	}
 
@@ -145,12 +156,12 @@ func TestOrgConfig_Validate_NegativeRetries(t *testing.T) {
 	assert.Contains(t, err.Error(), "max_implementation_retries must be non-negative")
 }
 
-func TestOrgConfig_Validate_InvalidAgent(t *testing.T) {
+func TestOrgConfig_Validate_InvalidRole(t *testing.T) {
 	cfg := &OrgConfig{
 		Version:  "1",
 		Dispatch: DispatchConfig{Platform: "github-actions"},
 		Defaults: RepoDefaults{
-			Agents: []string{"triage", "foobar"},
+			Roles: []string{"triage", "foobar"},
 		},
 	}
 
@@ -159,27 +170,69 @@ func TestOrgConfig_Validate_InvalidAgent(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown agent role")
 }
 
-func TestNewOrgConfig_AppIdentity(t *testing.T) {
-	cfg := NewOrgConfig(nil, nil, nil, "my-custom-app", "my-custom-app")
+func TestOrgConfig_Validate_InvalidRoleInRepo(t *testing.T) {
+	cfg := &OrgConfig{
+		Version:  "1",
+		Dispatch: DispatchConfig{Platform: "github-actions"},
+		Defaults: RepoDefaults{
+			Roles: DefaultRoles(),
+		},
+		Repos: map[string]RepoConfig{
+			"api": {Roles: []string{"badrole"}, Enabled: true},
+		},
+	}
 
-	assert.Equal(t, "my-custom-app", cfg.App.Name)
-	assert.Equal(t, "my-custom-app", cfg.App.Slug)
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown agent role")
 }
 
-func TestNewOrgConfig_AppIdentityInMarshal(t *testing.T) {
-	cfg := NewOrgConfig([]string{"api"}, nil, nil, "renamed-app", "renamed-app")
+func TestNewOrgConfig_AgentEntries(t *testing.T) {
+	agents := []AgentEntry{
+		{Role: "triage", Name: "fullsend-org-triage", Slug: "fullsend-org-triage"},
+		{Role: "coder", Name: "fullsend-org-coder", Slug: "fullsend-org-coder"},
+		{Role: "review", Name: "fullsend-org-review", Slug: "fullsend-org-review"},
+	}
 
-	data, err := cfg.Marshal()
-	require.NoError(t, err)
+	cfg := NewOrgConfig(nil, nil, nil, agents)
 
-	var parsed OrgConfig
-	err = yaml.Unmarshal(data, &parsed)
-	require.NoError(t, err)
-
-	assert.Equal(t, "renamed-app", parsed.App.Name)
-	assert.Equal(t, "renamed-app", parsed.App.Slug)
+	require.Len(t, cfg.Agents, 3)
+	assert.Equal(t, "triage", cfg.Agents[0].Role)
+	assert.Equal(t, "fullsend-org-triage", cfg.Agents[0].Name)
+	assert.Equal(t, "fullsend-org-triage", cfg.Agents[0].Slug)
+	assert.Equal(t, "coder", cfg.Agents[1].Role)
+	assert.Equal(t, "review", cfg.Agents[2].Role)
 }
 
-func TestDefaultAgents(t *testing.T) {
-	assert.Equal(t, []string{"triage", "implementation", "review"}, DefaultAgents())
+func TestOrgConfig_AgentSlugs(t *testing.T) {
+	cfg := &OrgConfig{
+		Agents: []AgentEntry{
+			{Role: "triage", Name: "triage-app", Slug: "triage-slug"},
+			{Role: "coder", Name: "coder-app", Slug: "coder-slug"},
+		},
+	}
+
+	slugs := cfg.AgentSlugs()
+	assert.Equal(t, []string{"triage-slug", "coder-slug"}, slugs)
+}
+
+func TestOrgConfig_AgentSlugs_Empty(t *testing.T) {
+	cfg := &OrgConfig{}
+
+	slugs := cfg.AgentSlugs()
+	assert.Empty(t, slugs)
+}
+
+func TestDefaultRoles(t *testing.T) {
+	assert.Equal(t, []string{"triage", "coder", "review"}, DefaultRoles())
+}
+
+func TestValidRoles(t *testing.T) {
+	valid := ValidRoles()
+
+	assert.True(t, valid["triage"])
+	assert.True(t, valid["coder"])
+	assert.True(t, valid["review"])
+	assert.False(t, valid["implementation"])
+	assert.False(t, valid["foobar"])
 }

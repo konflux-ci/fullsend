@@ -45,7 +45,7 @@ func TestInstallCmd_Help(t *testing.T) {
 	cmd := newInstallCmd()
 
 	assert.Equal(t, "install <org>", cmd.Use)
-	assert.Contains(t, cmd.Long, "safe defaults")
+	assert.Contains(t, cmd.Long, "safe")
 	assert.Contains(t, cmd.Long, "Nothing gets automatically merged")
 	assert.Contains(t, cmd.Long, "GITHUB_TOKEN")
 	assert.Contains(t, cmd.Long, "GH_TOKEN")

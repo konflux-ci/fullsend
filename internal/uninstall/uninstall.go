@@ -97,7 +97,7 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 	// Step 0: Verify .fullsend repo exists by reading config
 	un.printer.StepStart("Reading configuration from .fullsend repo...")
 
-	appSlug, err := un.readAppSlug(ctx, opts.Org)
+	agents, err := un.readAgents(ctx, opts.Org)
 	if err != nil {
 		un.printer.StepFail(fmt.Sprintf("Could not read %s/.fullsend/config.yaml", opts.Org))
 		un.printer.Blank()
@@ -110,15 +110,20 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 				opts.Org, un.webURL, opts.Org, un.webURL, opts.Org))
 		return fmt.Errorf(".fullsend repo not found in %s — nothing to uninstall", opts.Org)
 	}
-	un.printer.StepDone(fmt.Sprintf("Found app: %s", appSlug))
+
+	un.printer.StepDone(fmt.Sprintf("Found %d agent apps:", len(agents)))
+	for _, a := range agents {
+		un.printer.StepInfo(fmt.Sprintf("  %s: %s", a.Role, a.Slug))
+	}
 
 	// Step 1: Confirm with the user (unless --yolo)
 	if !opts.Yolo {
 		un.printer.Blank()
 		un.printer.StepWarn("This will permanently delete:")
 		un.printer.StepInfo(fmt.Sprintf("  • The %s/.fullsend repository and all its contents", opts.Org))
-		un.printer.StepInfo(fmt.Sprintf("  • The %s GitHub App installation on %s", appSlug, opts.Org))
-		un.printer.StepInfo(fmt.Sprintf("  • The %s app registration", appSlug))
+		for _, a := range agents {
+			un.printer.StepInfo(fmt.Sprintf("  • The %s app installation and registration", a.Slug))
+		}
 		un.printer.Blank()
 
 		confirmed, confirmErr := un.prompt.ConfirmWithInput(
@@ -148,27 +153,32 @@ func (un *Uninstaller) Run(ctx context.Context, opts Options) error {
 
 	// Step 3: Delete the .fullsend repo
 	if deleteErr := un.deleteConfigRepo(ctx, opts.Org, hasDeleteRepo); deleteErr != nil {
-		// Non-fatal — continue with app uninstall
 		_ = deleteErr
 	}
 
-	// Step 4: Uninstall the app (browser flow — API requires app JWT)
-	if err := un.uninstallApp(ctx, opts.Org, appSlug); err != nil {
-		// Non-fatal
-		_ = err
+	// Step 4: Uninstall and delete each agent app
+	for _, agent := range agents {
+		un.printer.Header(fmt.Sprintf("Removing %s agent (%s)", agent.Role, agent.Slug))
+		un.printer.Blank()
+
+		if uninstallErr := un.uninstallApp(ctx, opts.Org, agent.Slug); uninstallErr != nil {
+			_ = uninstallErr
+		}
+
+		if deleteErr := un.deleteAppRegistration(ctx, opts.Org, agent.Slug); deleteErr != nil {
+			_ = deleteErr
+		}
 	}
 
-	// Step 6: Delete the app registration (browser flow)
-	if err := un.deleteAppRegistration(ctx, opts.Org, appSlug); err != nil {
-		// Non-fatal
-		_ = err
-	}
-
-	un.printer.Summary("Uninstall complete", []string{
+	summaryItems := []string{
 		fmt.Sprintf("Deleted: %s/.fullsend", opts.Org),
-		fmt.Sprintf("Uninstalled: %s from %s", appSlug, opts.Org),
-		fmt.Sprintf("Deleted: %s app registration", appSlug),
-	})
+	}
+	for _, a := range agents {
+		summaryItems = append(summaryItems,
+			fmt.Sprintf("Removed: %s (%s)", a.Slug, a.Role))
+	}
+
+	un.printer.Summary("Uninstall complete", summaryItems)
 
 	return nil
 }
@@ -328,23 +338,23 @@ func (un *Uninstaller) checkTokenScopes(ctx context.Context) string {
 	return resp.Header.Get("X-OAuth-Scopes")
 }
 
-// readAppSlug reads the app slug from .fullsend/config.yaml.
-func (un *Uninstaller) readAppSlug(ctx context.Context, org string) (string, error) {
+// readAgents reads the agent entries from .fullsend/config.yaml.
+func (un *Uninstaller) readAgents(ctx context.Context, org string) ([]config.AgentEntry, error) {
 	data, err := un.client.GetFileContent(ctx, org, ".fullsend", "config.yaml")
 	if err != nil {
-		return "", fmt.Errorf("reading config.yaml: %w", err)
+		return nil, fmt.Errorf("reading config.yaml: %w", err)
 	}
 
 	var cfg config.OrgConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", fmt.Errorf("parsing config.yaml: %w", err)
+		return nil, fmt.Errorf("parsing config.yaml: %w", err)
 	}
 
-	if cfg.App.Slug == "" {
-		return "", fmt.Errorf("no app slug found in config.yaml")
+	if len(cfg.Agents) == 0 {
+		return nil, fmt.Errorf("no agents found in config.yaml")
 	}
 
-	return cfg.App.Slug, nil
+	return cfg.Agents, nil
 }
 
 type orgInstallation struct {

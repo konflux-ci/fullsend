@@ -114,12 +114,12 @@ func TestInstall_CustomAgents(t *testing.T) {
 	inst, _ := newTestInstaller(client)
 
 	result, err := inst.Run(context.Background(), Options{
-		Org:    "org",
-		Agents: []string{"review", "implementation"},
+		Org:   "org",
+		Roles: []string{"review", "coder"},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"review", "implementation"}, result.Config.Defaults.Agents)
+	assert.Equal(t, []string{"review", "coder"}, result.Config.Defaults.Roles)
 }
 
 func TestInstall_SafeDefaults(t *testing.T) {
@@ -138,20 +138,8 @@ func TestInstall_SafeDefaults(t *testing.T) {
 	assert.False(t, result.Config.Repos["api"].Enabled, "repos must default to disabled")
 }
 
-func TestInstall_AppPermissions(t *testing.T) {
-	client := forge.NewFakeClient()
-	inst, _ := newTestInstaller(client)
-
-	result, err := inst.Run(context.Background(), Options{Org: "org"})
-	require.NoError(t, err)
-
-	// Verify minimum required permissions per acceptance criteria
-	perms := result.AppConfig.Permissions
-	assert.Equal(t, "write", perms.Issues)
-	assert.Equal(t, "write", perms.PullReqs)
-	assert.Equal(t, "read", perms.Checks)
-	assert.Equal(t, "write", perms.Contents)
-}
+// TestInstall_AppPermissions removed: permissions model changed to per-agent
+// (per role), not per-org. See AgentAppConfig in forge/github/types.go.
 
 func TestInstall_SkipsFullsendRepo(t *testing.T) {
 	client := forge.NewFakeClient()
@@ -354,8 +342,8 @@ func TestInstall_ConfigValidation(t *testing.T) {
 
 	// Invalid agent role should fail config validation
 	_, err := inst.Run(context.Background(), Options{
-		Org:    "org",
-		Agents: []string{"invalid-agent"},
+		Org:   "org",
+		Roles: []string{"invalid-agent"},
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid configuration")

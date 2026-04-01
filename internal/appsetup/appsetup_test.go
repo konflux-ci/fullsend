@@ -71,26 +71,47 @@ func newTestSetup(t *testing.T, ghAPI *httptest.Server, ghWeb *httptest.Server) 
 	return s, prompt, browser, &buf
 }
 
-func TestBuildManifest(t *testing.T) {
+func TestBuildManifest_TriageRole(t *testing.T) {
 	var buf bytes.Buffer
 	printer := ui.NewPrinter(&buf)
 	s := New(printer, nil, nil, "tok")
 
-	manifest := s.buildManifest("my-org", "http://localhost:9999/callback")
+	manifest := s.buildManifest("my-org", "triage", "http://localhost:9999/callback")
 
-	assert.Equal(t, "fullsend-my-org", manifest["name"])
+	assert.Equal(t, "fullsend-my-org-triage", manifest["name"])
 	assert.Equal(t, "http://localhost:9999/callback", manifest["redirect_url"])
 	assert.Equal(t, false, manifest["public"])
 
 	perms := manifest["default_permissions"].(map[string]string)
 	assert.Equal(t, "write", perms["issues"])
-	assert.Equal(t, "write", perms["pull_requests"])
-	assert.Equal(t, "read", perms["checks"])
-	assert.Equal(t, "write", perms["contents"])
+	// triage has no pull_requests, checks, or contents permissions
+	assert.Empty(t, perms["pull_requests"])
+	assert.Empty(t, perms["checks"])
+	assert.Empty(t, perms["contents"])
 
 	events := manifest["default_events"].([]string)
 	assert.Contains(t, events, "issues")
+	assert.Contains(t, events, "issue_comment")
+}
+
+func TestBuildManifest_CoderRole(t *testing.T) {
+	var buf bytes.Buffer
+	printer := ui.NewPrinter(&buf)
+	s := New(printer, nil, nil, "tok")
+
+	manifest := s.buildManifest("my-org", "coder", "http://localhost:9999/callback")
+
+	assert.Equal(t, "fullsend-my-org-coder", manifest["name"])
+
+	perms := manifest["default_permissions"].(map[string]string)
+	assert.Equal(t, "write", perms["contents"])
+	assert.Equal(t, "write", perms["pull_requests"])
+	assert.Equal(t, "read", perms["checks"])
+	assert.Empty(t, perms["issues"])
+
+	events := manifest["default_events"].([]string)
 	assert.Contains(t, events, "pull_request")
+	assert.Contains(t, events, "check_run")
 }
 
 func TestExchangeCode(t *testing.T) {
@@ -199,7 +220,7 @@ func TestFindExistingApp_Found(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"installations": []map[string]any{
 				{"app_slug": "other-app", "repository_selection": "all"},
-				{"app_slug": "fullsend-my-org", "repository_selection": "selected"},
+				{"app_slug": "fullsend-my-org-triage", "repository_selection": "selected"},
 			},
 		})
 	}))
@@ -207,10 +228,10 @@ func TestFindExistingApp_Found(t *testing.T) {
 
 	s, _, _, _ := newTestSetup(t, srv, nil)
 
-	creds, err := s.findExistingApp(context.Background(), "my-org")
+	creds, err := s.findExistingApp(context.Background(), "my-org", "triage")
 	require.NoError(t, err)
 	require.NotNil(t, creds)
-	assert.Equal(t, "fullsend-my-org", creds.Slug)
+	assert.Equal(t, "fullsend-my-org-triage", creds.Slug)
 }
 
 func TestFindExistingApp_NotFound(t *testing.T) {
@@ -226,7 +247,26 @@ func TestFindExistingApp_NotFound(t *testing.T) {
 
 	s, _, _, _ := newTestSetup(t, srv, nil)
 
-	creds, err := s.findExistingApp(context.Background(), "my-org")
+	creds, err := s.findExistingApp(context.Background(), "my-org", "triage")
+	require.NoError(t, err)
+	assert.Nil(t, creds)
+}
+
+func TestFindExistingApp_WrongRole(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"installations": []map[string]any{
+				{"app_slug": "fullsend-my-org-triage", "repository_selection": "all"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s, _, _, _ := newTestSetup(t, srv, nil)
+
+	// Looking for coder, but only triage is installed
+	creds, err := s.findExistingApp(context.Background(), "my-org", "coder")
 	require.NoError(t, err)
 	assert.Nil(t, creds)
 }

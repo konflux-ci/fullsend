@@ -112,20 +112,21 @@ func New(printer *ui.Printer, prompt Prompter, browser BrowserOpener, token stri
 	return s
 }
 
-// Run executes the full app creation and installation flow.
-// Returns the app credentials or an error.
-func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
-	s.printer.Header("GitHub App setup")
+// Run creates or finds the GitHub App for a single agent role and ensures it
+// is installed on the organization.  The CLI is expected to call Run once per
+// role (e.g. in a loop over DefaultAgentRoles).
+func (s *Setup) Run(ctx context.Context, org, role string) (*AppCredentials, error) {
+	s.printer.Header(fmt.Sprintf("GitHub App setup: %s agent", role))
 	s.printer.Blank()
 
-	// Step 1: Check if a fullsend app already exists on this org
-	creds, err := s.resolveApp(ctx, org)
+	// Step 1: Check if a fullsend app for this role already exists on the org
+	creds, err := s.resolveApp(ctx, org, role)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 2: Check installation and handle if needed
-	if err := s.ensureInstalled(ctx, org, creds.Slug); err != nil {
+	if err := s.ensureInstalled(ctx, org, role, creds.Slug); err != nil {
 		return nil, err
 	}
 
@@ -133,12 +134,12 @@ func (s *Setup) Run(ctx context.Context, org string) (*AppCredentials, error) {
 	return creds, nil
 }
 
-// resolveApp either finds an existing fullsend app on the org or walks
-// the user through creating one.
-func (s *Setup) resolveApp(ctx context.Context, org string) (*AppCredentials, error) {
-	s.printer.StepStart("Checking for existing fullsend app...")
+// resolveApp either finds an existing fullsend app for the given role on the
+// org or walks the user through creating one.
+func (s *Setup) resolveApp(ctx context.Context, org, role string) (*AppCredentials, error) {
+	s.printer.StepStart(fmt.Sprintf("Checking for existing fullsend %s app...", role))
 
-	existing, err := s.findExistingApp(ctx, org)
+	existing, err := s.findExistingApp(ctx, org, role)
 	if err != nil {
 		// Non-fatal — we can still offer to create one
 		s.printer.StepInfo(fmt.Sprintf("Could not check for existing app: %v", err))
@@ -163,14 +164,14 @@ func (s *Setup) resolveApp(ctx context.Context, org string) (*AppCredentials, er
 	}
 
 	// No existing app (or user declined) — create one
-	s.printer.StepInfo("We need you to create a GitHub App.")
+	s.printer.StepInfo(fmt.Sprintf("We need you to create a GitHub App for the %s agent.", role))
 	s.printer.Blank()
 
-	if promptErr := s.prompt.WaitForEnter("Press [Enter] to be taken to the app creation flow..."); promptErr != nil {
+	if promptErr := s.prompt.WaitForEnter(fmt.Sprintf("Press [Enter] to be taken to the %s app creation flow...", role)); promptErr != nil {
 		return nil, fmt.Errorf("waiting for user: %w", promptErr)
 	}
 
-	creds, createErr := s.createAppViaManifest(ctx, org)
+	creds, createErr := s.createAppViaManifest(ctx, org, role)
 	if createErr != nil {
 		s.printer.StepFail("GitHub App creation failed")
 		return nil, fmt.Errorf("creating GitHub App: %w", createErr)
@@ -187,8 +188,8 @@ func (s *Setup) resolveApp(ctx context.Context, org string) (*AppCredentials, er
 // ensureInstalled checks if the app is already installed with access to all
 // repos. If it is, skips the installation step. Otherwise, walks the user
 // through the installation flow.
-func (s *Setup) ensureInstalled(ctx context.Context, org, appSlug string) error {
-	s.printer.StepStart("Checking app installation...")
+func (s *Setup) ensureInstalled(ctx context.Context, org, role, appSlug string) error {
+	s.printer.StepStart(fmt.Sprintf("Checking %s app installation...", role))
 
 	installation, err := s.getInstallation(ctx, org, appSlug)
 	if err != nil {
@@ -213,7 +214,7 @@ func (s *Setup) ensureInstalled(ctx context.Context, org, appSlug string) error 
 	}
 
 	// Not installed or user wants to update — walk through installation
-	s.printer.StepInfo("We need you to install the app on your organization.")
+	s.printer.StepInfo(fmt.Sprintf("We need you to install the %s app on your organization.", role))
 	s.printer.StepInfo("This grants it access to the repos you choose.")
 	s.printer.Blank()
 
@@ -260,7 +261,7 @@ func (s *Setup) ensureInstalled(ctx context.Context, org, appSlug string) error 
 // 2. Open browser to form page that POSTs manifest to GitHub
 // 3. Catch redirect with code
 // 4. Exchange code for credentials
-func (s *Setup) createAppViaManifest(ctx context.Context, org string) (*AppCredentials, error) {
+func (s *Setup) createAppViaManifest(ctx context.Context, org, role string) (*AppCredentials, error) {
 	// Pick a free port
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
@@ -272,7 +273,7 @@ func (s *Setup) createAppViaManifest(ctx context.Context, org string) (*AppCrede
 	redirectURL := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
 	// Build the manifest
-	manifest := s.buildManifest(org, redirectURL)
+	manifest := s.buildManifest(org, role, redirectURL)
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		_ = listener.Close()
@@ -394,16 +395,18 @@ type installationInfo struct {
 	RepoSelection string `json:"repository_selection"` // "all" or "selected"
 }
 
-// findExistingApp checks the org's installed apps for one that looks like
-// a fullsend app (slug starts with "fullsend"). Returns nil if none found.
-func (s *Setup) findExistingApp(ctx context.Context, org string) (*AppCredentials, error) {
+// findExistingApp checks the org's installed apps for one whose slug matches
+// the expected pattern for the given role (fullsend-{org}-{role}).
+// Returns nil if none found.
+func (s *Setup) findExistingApp(ctx context.Context, org, role string) (*AppCredentials, error) {
 	installations, err := s.listInstallations(ctx, org)
 	if err != nil {
 		return nil, err
 	}
 
+	expectedSlug := fmt.Sprintf("fullsend-%s-%s", org, role)
 	for _, inst := range installations {
-		if strings.HasPrefix(inst.AppSlug, "fullsend") {
+		if inst.AppSlug == expectedSlug {
 			return &AppCredentials{
 				Name:    inst.AppSlug, // Best we can get without app-level auth
 				Slug:    inst.AppSlug,
@@ -471,9 +474,24 @@ func (s *Setup) listInstallations(ctx context.Context, org string) ([]installati
 	return result.Installations, nil
 }
 
-// buildManifest constructs the GitHub App manifest with the right permissions.
-func (s *Setup) buildManifest(org, redirectURL string) map[string]any {
-	appConfig := github.DefaultAppConfig(org)
+// buildManifest constructs the GitHub App manifest with the right permissions
+// for the given agent role.
+func (s *Setup) buildManifest(org, role, redirectURL string) map[string]any {
+	appConfig := github.AgentAppConfig(org, role)
+
+	perms := map[string]string{}
+	if appConfig.Permissions.Issues != "" {
+		perms["issues"] = appConfig.Permissions.Issues
+	}
+	if appConfig.Permissions.PullRequests != "" {
+		perms["pull_requests"] = appConfig.Permissions.PullRequests
+	}
+	if appConfig.Permissions.Checks != "" {
+		perms["checks"] = appConfig.Permissions.Checks
+	}
+	if appConfig.Permissions.Contents != "" {
+		perms["contents"] = appConfig.Permissions.Contents
+	}
 
 	return map[string]any{
 		"name":         appConfig.Name,
@@ -485,13 +503,8 @@ func (s *Setup) buildManifest(org, redirectURL string) map[string]any {
 			"url":    appConfig.URL,
 			"active": false,
 		},
-		"default_permissions": map[string]string{
-			"issues":        appConfig.Permissions.Issues,
-			"pull_requests": appConfig.Permissions.PullReqs,
-			"checks":        appConfig.Permissions.Checks,
-			"contents":      appConfig.Permissions.Contents,
-		},
-		"default_events": appConfig.Events,
+		"default_permissions": perms,
+		"default_events":      appConfig.Events,
 	}
 }
 
