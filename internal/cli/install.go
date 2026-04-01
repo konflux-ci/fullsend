@@ -152,7 +152,7 @@ Examples:
 
 			// Step 2: Create config repo, store secrets, and enrollment PRs
 
-			inst := install.New(client, printer)
+			inst := install.New(client, printer, appsetup.StdinPrompter{})
 			_, err := inst.Run(cmd.Context(), install.Options{
 				Org:    org,
 				Agents: agentCreds,

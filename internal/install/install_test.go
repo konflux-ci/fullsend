@@ -13,10 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakePrompter always confirms yes.
+type fakePrompter struct{}
+
+func (fakePrompter) Confirm(_ string) (bool, error) { return true, nil }
+
 func newTestInstaller(client *forge.FakeClient) (*Installer, *bytes.Buffer) {
 	var buf bytes.Buffer
 	printer := ui.NewPrinter(&buf)
-	return New(client, printer), &buf
+	return New(client, printer, fakePrompter{}), &buf
 }
 
 func TestInstall_BasicFlow(t *testing.T) {

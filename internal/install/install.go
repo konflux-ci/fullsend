@@ -60,17 +60,25 @@ type Result struct {
 	SecretsStored   int
 }
 
+// Prompter handles interactive user prompts during installation.
+type Prompter interface {
+	// Confirm prints a yes/no prompt and returns true if the user answers yes.
+	Confirm(prompt string) (bool, error)
+}
+
 // Installer performs the fullsend installation workflow.
 type Installer struct {
 	client  forge.Client
 	printer *ui.Printer
+	prompt  Prompter
 }
 
-// New creates an Installer with the given forge client and UI printer.
-func New(client forge.Client, printer *ui.Printer) *Installer {
+// New creates an Installer with the given forge client, UI printer, and prompter.
+func New(client forge.Client, printer *ui.Printer, prompt Prompter) *Installer {
 	return &Installer{
 		client:  client,
 		printer: printer,
+		prompt:  prompt,
 	}
 }
 
@@ -288,12 +296,19 @@ func (inst *Installer) writeConfigFiles(ctx context.Context, org string, result 
 		return fmt.Errorf("marshalling config: %w", err)
 	}
 
+	// Handle config.yaml specially — check for existing file and show diff
+	configPath := "config.yaml"
+	configData, err = inst.resolveConfigConflict(ctx, org, configData)
+	if err != nil {
+		return err
+	}
+
 	// Required files — failure is fatal
 	required := []struct {
 		path, message string
 		content       []byte
 	}{
-		{"config.yaml", "Initialize fullsend configuration", configData},
+		{configPath, "Update fullsend configuration", configData},
 		{".github/workflows/agent.yaml", "Add reusable agent dispatch workflow", []byte(generateReusableWorkflow())},
 		{".github/workflows/repo-onboard.yaml", "Add repo onboarding workflow", []byte(generateOnboardingWorkflow(org))},
 	}
@@ -323,6 +338,108 @@ func (inst *Installer) writeConfigFiles(ctx context.Context, org string, result 
 
 	inst.printer.StepDone("Configuration files written to .fullsend")
 	return nil
+}
+
+// resolveConfigConflict checks if config.yaml already exists in the .fullsend repo.
+// If it does, shows a diff and asks the user whether to overwrite or write as .new.
+// Returns the config data and the path to write to.
+func (inst *Installer) resolveConfigConflict(ctx context.Context, org string, newConfig []byte) ([]byte, error) {
+	existing, err := inst.client.GetFileContent(ctx, org, ".fullsend", "config.yaml")
+	if err != nil {
+		// File doesn't exist — proceed normally
+		return newConfig, nil
+	}
+
+	// File exists — compare
+	existingStr := string(existing)
+	newStr := string(newConfig)
+
+	if existingStr == newStr {
+		inst.printer.StepDone("config.yaml is unchanged")
+		return newConfig, nil
+	}
+
+	// Show diff
+	diff := unifiedDiff(existingStr, newStr, "config.yaml (current)", "config.yaml (new)")
+	inst.printer.Blank()
+	inst.printer.Header("config.yaml has changed")
+	inst.printer.Blank()
+
+	// Print colorized diff
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+"):
+			inst.printer.StepDone(line)
+		case strings.HasPrefix(line, "-"):
+			inst.printer.StepFail(line)
+		case strings.HasPrefix(line, "@@"):
+			inst.printer.StepInfo(line)
+		default:
+			inst.printer.StepStart(line)
+		}
+	}
+
+	inst.printer.Blank()
+
+	if inst.prompt != nil {
+		overwrite, confirmErr := inst.prompt.Confirm("Overwrite config.yaml with the new version? [Y/n] ")
+		if confirmErr != nil {
+			return nil, fmt.Errorf("reading confirmation: %w", confirmErr)
+		}
+
+		if !overwrite {
+			inst.printer.StepInfo("Writing new config as config.yaml.new instead")
+			// Write the new config as config.yaml.new
+			if writeErr := inst.writeFileWithRetry(ctx, org, ".fullsend", "config.yaml.new",
+				"Add updated fullsend configuration as config.yaml.new", newConfig, false); writeErr != nil {
+				return nil, fmt.Errorf("writing config.yaml.new: %w", writeErr)
+			}
+			inst.printer.StepDone("Wrote config.yaml.new — review and rename when ready")
+			// Return the existing config so we don't overwrite
+			return existing, nil
+		}
+	}
+
+	inst.printer.StepInfo("Overwriting config.yaml")
+	return newConfig, nil
+}
+
+// unifiedDiff produces a unified diff between two strings.
+func unifiedDiff(a, b, fromFile, toFile string) string {
+	aLines := strings.Split(a, "\n")
+	bLines := strings.Split(b, "\n")
+
+	// Simple unified diff implementation
+	var result strings.Builder
+	fmt.Fprintf(&result, "--- %s\n", fromFile)
+	fmt.Fprintf(&result, "+++ %s\n", toFile)
+
+	i, j := 0, 0
+	for i < len(aLines) || j < len(bLines) {
+		if i < len(aLines) && j < len(bLines) && aLines[i] == bLines[j] {
+			fmt.Fprintf(&result, " %s\n", aLines[i])
+			i++
+			j++
+		} else if i < len(aLines) && (j >= len(bLines) || !containsFrom(bLines, j, aLines[i])) {
+			fmt.Fprintf(&result, "-%s\n", aLines[i])
+			i++
+		} else if j < len(bLines) {
+			fmt.Fprintf(&result, "+%s\n", bLines[j])
+			j++
+		}
+	}
+
+	return result.String()
+}
+
+// containsFrom checks if needle appears in haystack starting from index start.
+func containsFrom(haystack []string, start int, needle string) bool {
+	for k := start; k < len(haystack) && k < start+5; k++ {
+		if haystack[k] == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // writeFileWithRetry writes a single file to a repo with retry/backoff.
