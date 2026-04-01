@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -25,21 +28,24 @@ func newInstallCmd() *cobra.Command {
 configuration repository with safe defaults, and enrollment PRs for
 any repos you want to enable.
 
-Requires a GitHub personal access token with these scopes:
+Requires a GitHub token with these scopes:
   - repo (to create repos, branches, files, and PRs)
   - admin:org (to list org repos)
 
-Set the token via the GITHUB_TOKEN environment variable.
+The token is resolved in this order:
+  1. GH_TOKEN environment variable
+  2. GITHUB_TOKEN environment variable
+  3. gh CLI stored credentials (gh auth token)
 
 Nothing gets automatically merged as a result of installation.
 Repos receive PRs that must be reviewed and merged to take effect.
 
 Examples:
-  # Install with all defaults (all repos listed, none enabled)
-  export GITHUB_TOKEN=ghp_xxx
+  # Install using gh CLI credentials (if already logged in)
   fullsend install my-org
 
-  # Install and enable a specific repo
+  # Install with an explicit token
+  export GITHUB_TOKEN=ghp_xxx
   fullsend install my-org --repo cool-project
 
   # Install with only review and implementation agents
@@ -73,13 +79,16 @@ Examples:
 				return nil
 			}
 
-			token := os.Getenv("GITHUB_TOKEN")
+			token, source := resolveToken(cmd.Context())
 			if token == "" {
 				printer.ErrorBox("Authentication required",
-					"Set the GITHUB_TOKEN environment variable.\n"+
-						"  The token needs 'repo' and 'admin:org' scopes.")
-				return fmt.Errorf("GITHUB_TOKEN not set")
+					"No GitHub token found. fullsend checks these sources:\n"+
+						"  1. GH_TOKEN environment variable\n"+
+						"  2. GITHUB_TOKEN environment variable\n"+
+						"  3. gh CLI credentials (run: gh auth login)")
+				return fmt.Errorf("no GitHub token found")
 			}
+			printer.StepDone(fmt.Sprintf("Authenticated via %s", source))
 
 			client := github.NewLiveClient(token)
 
@@ -101,4 +110,33 @@ Examples:
 		"Preview what would happen without making changes")
 
 	return cmd
+}
+
+// resolveToken finds a GitHub token from available sources.
+// Returns the token and a human-readable description of where it came from.
+// Priority: GH_TOKEN > GITHUB_TOKEN > gh auth token.
+func resolveToken(ctx context.Context) (token, source string) {
+	if t := os.Getenv("GH_TOKEN"); t != "" {
+		return t, "GH_TOKEN"
+	}
+
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		return t, "GITHUB_TOKEN"
+	}
+
+	if t := ghAuthToken(ctx); t != "" {
+		return t, "gh CLI"
+	}
+
+	return "", ""
+}
+
+// ghAuthToken shells out to `gh auth token` to retrieve stored credentials.
+// Returns empty string if gh is not installed or not logged in.
+func ghAuthToken(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
