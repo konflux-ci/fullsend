@@ -19,7 +19,8 @@ import (
 	"sort"
 
 	"github.com/fullsend-ai/fullsend/internal/config"
-	gh "github.com/fullsend-ai/fullsend/internal/github"
+	"github.com/fullsend-ai/fullsend/internal/forge"
+	forgegithub "github.com/fullsend-ai/fullsend/internal/forge/github"
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
 
@@ -40,8 +41,8 @@ type Options struct {
 // Result holds the outcome of an install operation.
 type Result struct {
 	Config          *config.OrgConfig
-	AppConfig       *gh.AppConfig
-	PRs             map[string]*gh.PullRequest
+	AppConfig       *forgegithub.AppConfig
+	Proposals       map[string]*forge.ChangeProposal
 	DefaultBranches map[string]string
 	ConfigRepo      string
 	OrgRepos        []string
@@ -49,12 +50,12 @@ type Result struct {
 
 // Installer performs the fullsend installation workflow.
 type Installer struct {
-	client  gh.Client
+	client  forge.Client
 	printer *ui.Printer
 }
 
-// New creates an Installer with the given GitHub client and UI printer.
-func New(client gh.Client, printer *ui.Printer) *Installer {
+// New creates an Installer with the given forge client and UI printer.
+func New(client forge.Client, printer *ui.Printer) *Installer {
 	return &Installer{
 		client:  client,
 		printer: printer,
@@ -73,7 +74,7 @@ func (inst *Installer) Run(ctx context.Context, opts Options) (*Result, error) {
 
 	result := &Result{
 		ConfigRepo: ".fullsend",
-		PRs:        make(map[string]*gh.PullRequest),
+		Proposals:  make(map[string]*forge.ChangeProposal),
 	}
 
 	// Step 1: Discover org repos
@@ -148,8 +149,8 @@ func (inst *Installer) discoverRepos(ctx context.Context, org string) ([]string,
 	return names, defaultBranches, nil
 }
 
-func (inst *Installer) configureApp(org string) *gh.AppConfig {
-	appConfig := gh.DefaultAppConfig(org)
+func (inst *Installer) configureApp(org string) *forgegithub.AppConfig {
+	appConfig := forgegithub.DefaultAppConfig(org)
 
 	inst.printer.StepWarn("GitHub App creation requires manual setup")
 	inst.printer.StepInfo(fmt.Sprintf("Create a GitHub App named %q at:", appConfig.Name))
@@ -233,21 +234,21 @@ func (inst *Installer) createEnrollmentPRs(ctx context.Context, org string, resu
 		if branch, ok := result.DefaultBranches[repo]; ok && branch != "" {
 			defaultBranch = branch
 		}
-		pr, err := inst.enrollRepo(ctx, org, repo, defaultBranch)
+		proposal, err := inst.enrollRepo(ctx, org, repo, defaultBranch)
 		if err != nil {
 			inst.printer.StepFail(fmt.Sprintf("Failed to create PR for %s: %v", repo, err))
 			// Continue with other repos — don't fail the whole install
 			continue
 		}
-		result.PRs[repo] = pr
+		result.Proposals[repo] = proposal
 		inst.printer.StepDone(fmt.Sprintf("PR created for %s", repo))
-		inst.printer.StepInfo(pr.HTMLURL)
+		inst.printer.StepInfo(proposal.URL)
 	}
 
 	return nil
 }
 
-func (inst *Installer) enrollRepo(ctx context.Context, org, repo, defaultBranch string) (*gh.PullRequest, error) {
+func (inst *Installer) enrollRepo(ctx context.Context, org, repo, defaultBranch string) (*forge.ChangeProposal, error) {
 	branchName := "fullsend/enroll"
 
 	if err := inst.client.CreateBranch(ctx, org, repo, branchName); err != nil {
@@ -262,7 +263,7 @@ func (inst *Installer) enrollRepo(ctx context.Context, org, repo, defaultBranch 
 		return nil, fmt.Errorf("creating workflow file: %w", err)
 	}
 
-	pr, err := inst.client.CreatePullRequest(ctx, org, repo,
+	proposal, err := inst.client.CreateChangeProposal(ctx, org, repo,
 		"Connect to fullsend agent pipeline",
 		generatePRBody(org),
 		branchName,
@@ -271,7 +272,7 @@ func (inst *Installer) enrollRepo(ctx context.Context, org, repo, defaultBranch 
 		return nil, fmt.Errorf("creating pull request: %w", err)
 	}
 
-	return pr, nil
+	return proposal, nil
 }
 
 func (inst *Installer) printSummary(org string, result *Result) {
@@ -280,19 +281,19 @@ func (inst *Installer) printSummary(org string, result *Result) {
 		fmt.Sprintf("Repos discovered: %d", len(result.OrgRepos)),
 	}
 
-	if len(result.PRs) > 0 {
-		items = append(items, fmt.Sprintf("Enrollment PRs: %d", len(result.PRs)))
+	if len(result.Proposals) > 0 {
+		items = append(items, fmt.Sprintf("Enrollment PRs: %d", len(result.Proposals)))
 	}
 
 	items = append(items, "Auto-merge: disabled (safe default)")
 
 	inst.printer.Summary("Installation complete", items)
 
-	if len(result.PRs) > 0 {
+	if len(result.Proposals) > 0 {
 		inst.printer.Header("Pull requests to review")
 		inst.printer.Blank()
-		for repo, pr := range result.PRs {
-			inst.printer.PRLink(repo, pr.HTMLURL)
+		for repo, proposal := range result.Proposals {
+			inst.printer.PRLink(repo, proposal.URL)
 		}
 		inst.printer.Blank()
 		inst.printer.StepInfo("Review and merge these PRs to connect repos to the agent pipeline.")

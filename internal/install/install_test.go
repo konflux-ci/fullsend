@@ -6,21 +6,21 @@ import (
 	"errors"
 	"testing"
 
-	gh "github.com/fullsend-ai/fullsend/internal/github"
+	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestInstaller(client *gh.FakeClient) (*Installer, *bytes.Buffer) {
+func newTestInstaller(client *forge.FakeClient) (*Installer, *bytes.Buffer) {
 	var buf bytes.Buffer
 	printer := ui.NewPrinter(&buf)
 	return New(client, printer), &buf
 }
 
 func TestInstall_BasicFlow(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 		{Name: "web", FullName: "org/web", DefaultBranch: "main"},
 	}
@@ -46,7 +46,7 @@ func TestInstall_BasicFlow(t *testing.T) {
 	assert.GreaterOrEqual(t, len(client.CreatedFiles), 3)
 
 	// No repos enabled, so no PRs
-	assert.Empty(t, result.PRs)
+	assert.Empty(t, result.Proposals)
 
 	// Check output
 	assert.Contains(t, output.String(), "fullsend")
@@ -54,8 +54,8 @@ func TestInstall_BasicFlow(t *testing.T) {
 }
 
 func TestInstall_WithEnabledRepo(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 		{Name: "web", FullName: "org/web", DefaultBranch: "main"},
 	}
@@ -69,11 +69,11 @@ func TestInstall_WithEnabledRepo(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should create a PR for enabled repo
-	assert.Len(t, result.PRs, 1)
-	pr, ok := result.PRs["api"]
+	assert.Len(t, result.Proposals, 1)
+	proposal, ok := result.Proposals["api"]
 	require.True(t, ok)
-	assert.Equal(t, 1, pr.Number)
-	assert.Contains(t, pr.HTMLURL, "api")
+	assert.Equal(t, 1, proposal.Number)
+	assert.Contains(t, proposal.URL, "api")
 
 	// Should have created a branch and workflow file
 	assert.Len(t, client.CreatedBranches, 1)
@@ -85,8 +85,8 @@ func TestInstall_WithEnabledRepo(t *testing.T) {
 }
 
 func TestInstall_MultipleEnabledRepos(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 		{Name: "web", FullName: "org/web", DefaultBranch: "main"},
 		{Name: "docs", FullName: "org/docs", DefaultBranch: "main"},
@@ -100,14 +100,14 @@ func TestInstall_MultipleEnabledRepos(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Len(t, result.PRs, 2)
-	assert.Contains(t, result.PRs, "api")
-	assert.Contains(t, result.PRs, "docs")
+	assert.Len(t, result.Proposals, 2)
+	assert.Contains(t, result.Proposals, "api")
+	assert.Contains(t, result.Proposals, "docs")
 }
 
 func TestInstall_CustomAgents(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 	}
 
@@ -123,8 +123,8 @@ func TestInstall_CustomAgents(t *testing.T) {
 }
 
 func TestInstall_SafeDefaults(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 	}
 
@@ -139,7 +139,7 @@ func TestInstall_SafeDefaults(t *testing.T) {
 }
 
 func TestInstall_AppPermissions(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	inst, _ := newTestInstaller(client)
 
 	result, err := inst.Run(context.Background(), Options{Org: "org"})
@@ -154,8 +154,8 @@ func TestInstall_AppPermissions(t *testing.T) {
 }
 
 func TestInstall_SkipsFullsendRepo(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: ".fullsend", FullName: "org/.fullsend", DefaultBranch: "main"},
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 	}
@@ -171,7 +171,7 @@ func TestInstall_SkipsFullsendRepo(t *testing.T) {
 }
 
 func TestInstall_ListOrgReposError(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	client.Errors["ListOrgRepos"] = errors.New("forbidden")
 
 	inst, _ := newTestInstaller(client)
@@ -182,7 +182,7 @@ func TestInstall_ListOrgReposError(t *testing.T) {
 }
 
 func TestInstall_CreateRepoError(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	client.Errors["CreateRepo"] = errors.New("already exists")
 
 	inst, _ := newTestInstaller(client)
@@ -193,7 +193,7 @@ func TestInstall_CreateRepoError(t *testing.T) {
 }
 
 func TestInstall_CreateFileError(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	client.Errors["CreateFile"] = errors.New("write failed")
 
 	inst, _ := newTestInstaller(client)
@@ -203,8 +203,8 @@ func TestInstall_CreateFileError(t *testing.T) {
 }
 
 func TestInstall_PRCreationErrorContinues(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 		{Name: "web", FullName: "org/web", DefaultBranch: "main"},
 	}
@@ -221,7 +221,7 @@ func TestInstall_PRCreationErrorContinues(t *testing.T) {
 	require.NoError(t, err)
 
 	// PRs should be empty since branch creation failed
-	assert.Empty(t, result.PRs)
+	assert.Empty(t, result.Proposals)
 }
 
 func TestGenerateReusableWorkflow(t *testing.T) {
@@ -290,8 +290,8 @@ func TestValidateOrgName(t *testing.T) {
 }
 
 func TestInstall_DefaultBranch(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "develop"},
 	}
 
@@ -304,15 +304,15 @@ func TestInstall_DefaultBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	// The PR should use "develop" as the base branch, not "main"
-	require.Len(t, client.CreatedPRs, 1)
-	assert.Equal(t, "develop", client.CreatedPRs[0].Base)
+	require.Len(t, client.CreatedProposals, 1)
+	assert.Equal(t, "develop", client.CreatedProposals[0].Base)
 
 	// DefaultBranches should be populated
 	assert.Equal(t, "develop", result.DefaultBranches["api"])
 }
 
 func TestInstall_ConfigRepoIsPrivate(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	inst, _ := newTestInstaller(client)
 
 	_, err := inst.Run(context.Background(), Options{Org: "org"})
@@ -323,7 +323,7 @@ func TestInstall_ConfigRepoIsPrivate(t *testing.T) {
 }
 
 func TestInstall_InvalidOrgName(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	inst, _ := newTestInstaller(client)
 
 	_, err := inst.Run(context.Background(), Options{Org: "bad org!"})
@@ -332,8 +332,8 @@ func TestInstall_InvalidOrgName(t *testing.T) {
 }
 
 func TestInstall_RepoNotFoundWarning(t *testing.T) {
-	client := gh.NewFakeClient()
-	client.Repos = []gh.Repository{
+	client := forge.NewFakeClient()
+	client.Repos = []forge.Repository{
 		{Name: "api", FullName: "org/api", DefaultBranch: "main"},
 	}
 
@@ -349,7 +349,7 @@ func TestInstall_RepoNotFoundWarning(t *testing.T) {
 }
 
 func TestInstall_ConfigValidation(t *testing.T) {
-	client := gh.NewFakeClient()
+	client := forge.NewFakeClient()
 	inst, _ := newTestInstaller(client)
 
 	// Invalid agent role should fail config validation

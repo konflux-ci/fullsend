@@ -1,3 +1,4 @@
+// Package github implements the forge.Client interface for GitHub.
 package github
 
 import (
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/fullsend-ai/fullsend/internal/forge"
 )
 
 const (
@@ -20,14 +23,14 @@ const (
 	maxPages = 100
 )
 
-// LiveClient implements Client using the GitHub REST API.
+// LiveClient implements forge.Client using the GitHub REST API.
 type LiveClient struct {
 	http    *http.Client
 	token   string
 	baseURL string
 }
 
-// NewLiveClient creates a Client that talks to the GitHub API.
+// NewLiveClient creates a forge.Client that talks to the GitHub API.
 // The token must have repo, admin:org, and workflow scopes for full
 // install functionality.
 func NewLiveClient(token string) *LiveClient {
@@ -41,13 +44,13 @@ func NewLiveClient(token string) *LiveClient {
 }
 
 // ListOrgRepos returns all non-archived, non-fork repositories in the org.
-func (c *LiveClient) ListOrgRepos(ctx context.Context, org string) ([]Repository, error) {
-	var all []Repository
+func (c *LiveClient) ListOrgRepos(ctx context.Context, org string) ([]forge.Repository, error) {
+	var all []forge.Repository
 
 	for page := 1; page <= maxPages; page++ {
 		reqURL := fmt.Sprintf("%s/orgs/%s/repos?per_page=100&page=%d&type=all", c.baseURL, url.PathEscape(org), page)
 
-		var repos []Repository
+		var repos []forge.Repository
 		if err := c.get(ctx, reqURL, &repos); err != nil {
 			return nil, fmt.Errorf("listing repos page %d: %w", page, err)
 		}
@@ -68,7 +71,7 @@ func (c *LiveClient) ListOrgRepos(ctx context.Context, org string) ([]Repository
 }
 
 // CreateRepo creates a new repository in the organization.
-func (c *LiveClient) CreateRepo(ctx context.Context, org, name, description string, private bool) (*Repository, error) {
+func (c *LiveClient) CreateRepo(ctx context.Context, org, name, description string, private bool) (*forge.Repository, error) {
 	body := map[string]any{
 		"name":        name,
 		"description": description,
@@ -78,7 +81,7 @@ func (c *LiveClient) CreateRepo(ctx context.Context, org, name, description stri
 
 	reqURL := fmt.Sprintf("%s/orgs/%s/repos", c.baseURL, url.PathEscape(org))
 
-	var repo Repository
+	var repo forge.Repository
 	if err := c.post(ctx, reqURL, body, &repo); err != nil {
 		return nil, err
 	}
@@ -127,8 +130,8 @@ func (c *LiveClient) CreateBranch(ctx context.Context, owner, repo, branchName s
 	return c.post(ctx, reqURL, body, &result)
 }
 
-// CreatePullRequest creates a PR from head branch to base branch.
-func (c *LiveClient) CreatePullRequest(ctx context.Context, owner, repo, title, body, head, base string) (*PullRequest, error) {
+// CreateChangeProposal creates a PR from head branch to base branch.
+func (c *LiveClient) CreateChangeProposal(ctx context.Context, owner, repo, title, body, head, base string) (*forge.ChangeProposal, error) {
 	reqBody := map[string]any{
 		"title": title,
 		"body":  body,
@@ -138,12 +141,20 @@ func (c *LiveClient) CreatePullRequest(ctx context.Context, owner, repo, title, 
 
 	reqURL := fmt.Sprintf("%s/repos/%s/%s/pulls", c.baseURL, url.PathEscape(owner), url.PathEscape(repo))
 
-	var pr PullRequest
-	if err := c.post(ctx, reqURL, reqBody, &pr); err != nil {
+	var resp struct {
+		HTMLURL string `json:"html_url"`
+		Title   string `json:"title"`
+		Number  int    `json:"number"`
+	}
+	if err := c.post(ctx, reqURL, reqBody, &resp); err != nil {
 		return nil, err
 	}
 
-	return &pr, nil
+	return &forge.ChangeProposal{
+		URL:    resp.HTMLURL,
+		Title:  resp.Title,
+		Number: resp.Number,
+	}, nil
 }
 
 func (c *LiveClient) getDefaultBranchSHA(ctx context.Context, owner, repo string) (string, error) {

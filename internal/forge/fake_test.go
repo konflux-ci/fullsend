@@ -1,4 +1,4 @@
-package github
+package forge
 
 import (
 	"context"
@@ -56,22 +56,22 @@ func TestFakeClient_CreateFile(t *testing.T) {
 	assert.Equal(t, []byte("data"), client.CreatedFiles[0].Content)
 }
 
-func TestFakeClient_CreatePullRequest(t *testing.T) {
+func TestFakeClient_CreateChangeProposal(t *testing.T) {
 	client := NewFakeClient()
 
-	pr, err := client.CreatePullRequest(context.Background(),
+	proposal, err := client.CreateChangeProposal(context.Background(),
 		"org", "repo", "title", "body", "branch", "main")
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, pr.Number)
-	assert.Contains(t, pr.HTMLURL, "org/repo/pull/1")
-	assert.Equal(t, "title", pr.Title)
+	assert.Equal(t, 1, proposal.Number)
+	assert.Contains(t, proposal.URL, "org/repo/proposals/1")
+	assert.Equal(t, "title", proposal.Title)
 
-	// Second PR should get number 2
-	pr2, err := client.CreatePullRequest(context.Background(),
+	// Second proposal should get number 2
+	proposal2, err := client.CreateChangeProposal(context.Background(),
 		"org", "repo2", "title2", "body2", "branch", "main")
 	require.NoError(t, err)
-	assert.Equal(t, 2, pr2.Number)
+	assert.Equal(t, 2, proposal2.Number)
 }
 
 func TestFakeClient_CreateBranch(t *testing.T) {
@@ -120,10 +120,10 @@ func TestFakeClient_ErrorInjection(t *testing.T) {
 			},
 		},
 		{
-			name:   "CreatePullRequest",
-			method: "CreatePullRequest",
+			name:   "CreateChangeProposal",
+			method: "CreateChangeProposal",
 			fn: func() error {
-				_, err := client.CreatePullRequest(context.Background(), "o", "r", "t", "b", "h", "base")
+				_, err := client.CreateChangeProposal(context.Background(), "o", "r", "t", "b", "h", "base")
 				return err
 			},
 		},

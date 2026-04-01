@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/fullsend-ai/fullsend/internal/github"
+	forgegithub "github.com/fullsend-ai/fullsend/internal/forge/github"
 	"github.com/fullsend-ai/fullsend/internal/install"
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
@@ -90,7 +90,7 @@ Examples:
 			}
 			printer.StepDone(fmt.Sprintf("Authenticated via %s", source))
 
-			client := github.NewLiveClient(token)
+			client := forgegithub.NewLiveClient(token)
 
 			inst := install.New(client, printer)
 			_, err := inst.Run(cmd.Context(), install.Options{

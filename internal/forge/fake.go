@@ -1,4 +1,4 @@
-package github
+package forge
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// FakeClient is a test double for the GitHub Client interface.
+// FakeClient is a test double for the forge Client interface.
 // It records all calls and returns configurable responses.
 type FakeClient struct {
 	// Errors to inject, keyed by method name.
@@ -21,14 +21,14 @@ type FakeClient struct {
 	// CreatedFiles tracks calls to CreateFile and CreateFileOnBranch.
 	CreatedFiles []createFileCall
 
-	// CreatedPRs tracks calls to CreatePullRequest.
-	CreatedPRs []createPRCall
+	// CreatedProposals tracks calls to CreateChangeProposal.
+	CreatedProposals []createProposalCall
 
 	// CreatedBranches tracks calls to CreateBranch.
 	CreatedBranches []createBranchCall
 
-	mu        sync.Mutex
-	prCounter int
+	mu              sync.Mutex
+	proposalCounter int
 }
 
 type createRepoCall struct {
@@ -41,7 +41,7 @@ type createFileCall struct {
 	Content                            []byte
 }
 
-type createPRCall struct {
+type createProposalCall struct {
 	Owner, Repo, Title, Body, Head, Base string
 }
 
@@ -103,27 +103,27 @@ func (f *FakeClient) CreateFile(_ context.Context, owner, repo, path, message st
 	return nil
 }
 
-// CreatePullRequest implements the Client interface.
-func (f *FakeClient) CreatePullRequest(_ context.Context, owner, repo, title, body, head, base string) (*PullRequest, error) {
+// CreateChangeProposal implements the Client interface.
+func (f *FakeClient) CreateChangeProposal(_ context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if err := f.Errors["CreatePullRequest"]; err != nil {
+	if err := f.Errors["CreateChangeProposal"]; err != nil {
 		return nil, err
 	}
 
-	f.prCounter++
-	pr := &PullRequest{
-		Number:  f.prCounter,
-		HTMLURL: fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, f.prCounter),
-		Title:   title,
+	f.proposalCounter++
+	proposal := &ChangeProposal{
+		Number: f.proposalCounter,
+		URL:    fmt.Sprintf("https://example.com/%s/%s/proposals/%d", owner, repo, f.proposalCounter),
+		Title:  title,
 	}
 
-	f.CreatedPRs = append(f.CreatedPRs, createPRCall{
+	f.CreatedProposals = append(f.CreatedProposals, createProposalCall{
 		Owner: owner, Repo: repo, Title: title, Body: body, Head: head, Base: base,
 	})
 
-	return pr, nil
+	return proposal, nil
 }
 
 // CreateBranch implements the Client interface.

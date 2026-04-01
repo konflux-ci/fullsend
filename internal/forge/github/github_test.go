@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,11 +32,11 @@ func TestLiveClient_ListOrgRepos(t *testing.T) {
 
 		// Return repos on page 1, empty on page 2+
 		if r.URL.Query().Get("page") != "1" {
-			_ = json.NewEncoder(w).Encode([]Repository{})
+			_ = json.NewEncoder(w).Encode([]forge.Repository{})
 			return
 		}
 
-		repos := []Repository{
+		repos := []forge.Repository{
 			{Name: "api", FullName: "my-org/api", DefaultBranch: "main"},
 			{Name: "archived", FullName: "my-org/archived", Archived: true},
 			{Name: "fork", FullName: "my-org/fork", Fork: true},
@@ -61,13 +62,13 @@ func TestLiveClient_ListOrgRepos_Pagination(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if callCount == 1 {
-			repos := []Repository{
+			repos := []forge.Repository{
 				{Name: "repo1", FullName: "org/repo1"},
 			}
 			_ = json.NewEncoder(w).Encode(repos)
 		} else {
 			// Empty response stops pagination
-			_ = json.NewEncoder(w).Encode([]Repository{})
+			_ = json.NewEncoder(w).Encode([]forge.Repository{})
 		}
 	})
 
@@ -104,7 +105,7 @@ func TestLiveClient_CreateRepo(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(Repository{
+		_ = json.NewEncoder(w).Encode(forge.Repository{
 			Name:          ".fullsend",
 			FullName:      "my-org/.fullsend",
 			DefaultBranch: "main",
@@ -196,7 +197,7 @@ func TestLiveClient_CreateBranch(t *testing.T) {
 	assert.Equal(t, 3, callCount)
 }
 
-func TestLiveClient_CreatePullRequest(t *testing.T) {
+func TestLiveClient_CreateChangeProposal(t *testing.T) {
 	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/repos/org/repo/pulls", r.URL.Path)
@@ -210,18 +211,18 @@ func TestLiveClient_CreatePullRequest(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(PullRequest{
-			Number:  42,
-			HTMLURL: "https://github.com/org/repo/pull/42",
-			Title:   "My PR",
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number":   42,
+			"html_url": "https://github.com/org/repo/pull/42",
+			"title":    "My PR",
 		})
 	})
 
-	pr, err := client.CreatePullRequest(context.Background(),
+	proposal, err := client.CreateChangeProposal(context.Background(),
 		"org", "repo", "My PR", "Description", "feature", "main")
 	require.NoError(t, err)
-	assert.Equal(t, 42, pr.Number)
-	assert.Equal(t, "https://github.com/org/repo/pull/42", pr.HTMLURL)
+	assert.Equal(t, 42, proposal.Number)
+	assert.Equal(t, "https://github.com/org/repo/pull/42", proposal.URL)
 }
 
 func TestLiveClient_APIError_WithDetails(t *testing.T) {
@@ -249,7 +250,7 @@ func TestLiveClient_SetsAPIHeaders(t *testing.T) {
 		assert.Equal(t, "2022-11-28", r.Header.Get("X-GitHub-Api-Version"))
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]Repository{})
+		_ = json.NewEncoder(w).Encode([]forge.Repository{})
 	})
 
 	_, err := client.ListOrgRepos(context.Background(), "org")
