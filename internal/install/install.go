@@ -25,12 +25,15 @@ import (
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
 
-// AgentCredentials holds an agent's config entry plus its private key.
+// AgentCredentials holds an agent's config entry plus its private key and app ID.
 type AgentCredentials struct {
 	config.AgentEntry
 
 	// PEM is the private key for this agent's GitHub App.
 	PEM string
+
+	// AppID is the numeric GitHub App ID (needed for token generation).
+	AppID int
 }
 
 // Options holds the parameters for an install operation.
@@ -270,6 +273,7 @@ func (inst *Installer) storeAgentSecrets(ctx context.Context, org string, agents
 			continue
 		}
 
+		// Store PEM key as a secret
 		secretName := fmt.Sprintf("FULLSEND_%s_APP_PRIVATE_KEY", strings.ToUpper(agent.Role))
 		inst.printer.StepStart(fmt.Sprintf("Storing %s...", secretName))
 
@@ -279,6 +283,21 @@ func (inst *Installer) storeAgentSecrets(ctx context.Context, org string, agents
 		}
 
 		inst.printer.StepDone(fmt.Sprintf("Stored %s", secretName))
+
+		// Store app ID as a variable (not sensitive, needed by create-github-app-token action)
+		if agent.AppID > 0 {
+			varName := fmt.Sprintf("FULLSEND_%s_APP_ID", strings.ToUpper(agent.Role))
+			inst.printer.StepStart(fmt.Sprintf("Storing %s...", varName))
+
+			if err := inst.client.CreateOrUpdateRepoVariable(ctx, org, ".fullsend",
+				varName, fmt.Sprintf("%d", agent.AppID)); err != nil {
+				inst.printer.StepFail(fmt.Sprintf("Failed to store %s: %v", varName, err))
+				return stored, fmt.Errorf("storing variable %s: %w", varName, err)
+			}
+
+			inst.printer.StepDone(fmt.Sprintf("Stored %s = %d", varName, agent.AppID))
+		}
+
 		stored++
 	}
 
@@ -667,7 +686,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ vars.FULLSEND_APP_ID }}
+          app-id: ${{ vars.FULLSEND_FULLSEND_APP_ID }}
           private-key: ${{ secrets.FULLSEND_FULLSEND_APP_PRIVATE_KEY }}
           owner: %[1]s
 

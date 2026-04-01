@@ -214,6 +214,33 @@ func (c *LiveClient) RepoSecretExists(ctx context.Context, owner, repo, name str
 	return true, nil
 }
 
+// CreateOrUpdateRepoVariable creates or updates an Actions variable on a repository.
+func (c *LiveClient) CreateOrUpdateRepoVariable(ctx context.Context, owner, repo, name, value string) error {
+	body := map[string]string{
+		"name":  name,
+		"value": value,
+	}
+
+	// Try to update first (PATCH)
+	patchURL := fmt.Sprintf("%s/repos/%s/%s/actions/variables/%s",
+		c.baseURL, url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(name))
+
+	var result json.RawMessage
+	patchErr := c.patch(ctx, patchURL, body, &result)
+	if patchErr == nil {
+		return nil
+	}
+
+	// If 404, the variable doesn't exist yet — create it (POST)
+	if apiErr, ok := patchErr.(*apiError); ok && apiErr.StatusCode == 404 {
+		postURL := fmt.Sprintf("%s/repos/%s/%s/actions/variables",
+			c.baseURL, url.PathEscape(owner), url.PathEscape(repo))
+		return c.post(ctx, postURL, body, &result)
+	}
+
+	return patchErr
+}
+
 // CreateBranch creates a new branch from the default branch's HEAD.
 func (c *LiveClient) CreateBranch(ctx context.Context, owner, repo, branchName string) error {
 	// First, get the default branch SHA
@@ -447,6 +474,16 @@ func (c *LiveClient) delete(ctx context.Context, url string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	return c.handleResponse(resp, nil)
+}
+
+func (c *LiveClient) patch(ctx context.Context, url string, body any, result any) error {
+	resp, err := c.do(ctx, http.MethodPatch, url, body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return c.handleResponse(resp, result)
 }
 
 func (c *LiveClient) put(ctx context.Context, url string, body any, result any) error {

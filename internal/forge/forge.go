@@ -73,6 +73,9 @@ type Client interface {
 	// RepoSecretExists checks whether an Actions secret exists on a repository.
 	RepoSecretExists(ctx context.Context, owner, repo, name string) (bool, error)
 
+	// CreateOrUpdateRepoVariable creates or updates an Actions variable on a repository.
+	CreateOrUpdateRepoVariable(ctx context.Context, owner, repo, name, value string) error
+
 	// GetLatestWorkflowRun returns the most recent run of a workflow file.
 	GetLatestWorkflowRun(ctx context.Context, owner, repo, workflowFile string) (*WorkflowRun, error)
 

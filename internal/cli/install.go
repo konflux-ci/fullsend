@@ -149,7 +149,8 @@ Examples:
 							Name: creds.Name,
 							Slug: creds.Slug,
 						},
-						PEM: creds.PEM,
+						PEM:   creds.PEM,
+						AppID: creds.ID,
 					})
 					printer.Blank()
 				}

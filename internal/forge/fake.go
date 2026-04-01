@@ -215,6 +215,17 @@ func (f *FakeClient) CreateRepoSecret(_ context.Context, owner, repo, name, _ st
 	return nil
 }
 
+// CreateOrUpdateRepoVariable implements the Client interface.
+func (f *FakeClient) CreateOrUpdateRepoVariable(_ context.Context, _, _, _, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if err := f.Errors["CreateOrUpdateRepoVariable"]; err != nil {
+		return err
+	}
+	return nil
+}
+
 // RepoSecretExists implements the Client interface.
 func (f *FakeClient) RepoSecretExists(_ context.Context, owner, repo, name string) (bool, error) {
 	f.mu.Lock()
