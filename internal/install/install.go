@@ -218,36 +218,41 @@ func (inst *Installer) writeConfigFiles(ctx context.Context, org string, result 
 	}
 
 	for i, f := range files {
-		var createErr error
-		// Retry the first file with backoff on a new repo — GitHub may
-		// not have finished initializing the default branch.
-		maxAttempts := 1
+		// Retry each file with backoff. The Contents API creates a
+		// commit per file, so rapid sequential creates can hit 404/409
+		// as the branch ref updates. On a new repo the first file may
+		// also need to wait for branch initialization.
+		maxAttempts := 3
 		if i == 0 && newRepo {
 			maxAttempts = 5
 		}
 
+		var createErr error
 		for attempt := range maxAttempts {
-			createErr = inst.client.CreateFile(ctx, org, ".fullsend", f.path, f.message, f.content)
-			if createErr == nil {
-				break
-			}
-			if attempt < maxAttempts-1 {
-				wait := time.Duration(attempt+1) * time.Second
-				inst.printer.StepInfo(fmt.Sprintf("Waiting for repo to be ready (%v)...", wait))
+			if attempt > 0 {
+				wait := time.Duration(attempt) * 2 * time.Second
+				inst.printer.StepInfo(fmt.Sprintf("Retrying %s in %v...", f.path, wait))
 				select {
 				case <-time.After(wait):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 			}
+
+			createErr = inst.client.CreateFile(ctx, org, ".fullsend", f.path, f.message, f.content)
+			if createErr == nil {
+				break
+			}
+
+			// 422 means the file already exists — not retriable, just skip
+			if isAlreadyExistsError(createErr) {
+				inst.printer.StepInfo(fmt.Sprintf("%s already exists — skipping", f.path))
+				createErr = nil
+				break
+			}
 		}
 
 		if createErr != nil {
-			// 422 typically means the file already exists — skip it
-			if isAlreadyExistsError(createErr) {
-				inst.printer.StepInfo(fmt.Sprintf("%s already exists — skipping", f.path))
-				continue
-			}
 			inst.printer.StepFail(fmt.Sprintf("Failed to create %s: %v", f.path, createErr))
 			return fmt.Errorf("creating %s: %w", f.path, createErr)
 		}
