@@ -437,8 +437,17 @@ type installationInfo struct {
 	RepoSelection string `json:"repository_selection"` // "all" or "selected"
 }
 
+// expectedAppSlug returns the expected slug for a given org and role,
+// matching the naming convention in AgentAppConfig.
+func expectedAppSlug(org, role string) string {
+	if role == "fullsend" {
+		return fmt.Sprintf("fullsend-%s", org)
+	}
+	return fmt.Sprintf("fullsend-%s-%s", org, role)
+}
+
 // findExistingApp checks the org's installed apps for one whose slug matches
-// the expected pattern for the given role (fullsend-{org}-{role}).
+// the expected pattern for the given role.
 // Returns nil if none found.
 func (s *Setup) findExistingApp(ctx context.Context, org, role string) (*AppCredentials, error) {
 	installations, err := s.listInstallations(ctx, org)
@@ -446,11 +455,11 @@ func (s *Setup) findExistingApp(ctx context.Context, org, role string) (*AppCred
 		return nil, err
 	}
 
-	expectedSlug := fmt.Sprintf("fullsend-%s-%s", org, role)
+	expected := expectedAppSlug(org, role)
 	for _, inst := range installations {
-		if inst.AppSlug == expectedSlug {
+		if inst.AppSlug == expected {
 			return &AppCredentials{
-				Name:    inst.AppSlug, // Best we can get without app-level auth
+				Name:    inst.AppSlug,
 				Slug:    inst.AppSlug,
 				HTMLURL: fmt.Sprintf("%s/apps/%s", s.webURL, inst.AppSlug),
 			}, nil

@@ -252,6 +252,33 @@ func TestFindExistingApp_NotFound(t *testing.T) {
 	assert.Nil(t, creds)
 }
 
+func TestFindExistingApp_FullsendRole(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"installations": []map[string]any{
+				{"app_slug": "fullsend-my-org", "repository_selection": "all"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s, _, _, _ := newTestSetup(t, srv, nil)
+
+	// The fullsend role uses "fullsend-{org}" (no role suffix)
+	creds, err := s.findExistingApp(context.Background(), "my-org", "fullsend")
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	assert.Equal(t, "fullsend-my-org", creds.Slug)
+}
+
+func TestExpectedAppSlug(t *testing.T) {
+	assert.Equal(t, "fullsend-my-org", expectedAppSlug("my-org", "fullsend"))
+	assert.Equal(t, "fullsend-my-org-triage", expectedAppSlug("my-org", "triage"))
+	assert.Equal(t, "fullsend-my-org-coder", expectedAppSlug("my-org", "coder"))
+	assert.Equal(t, "fullsend-my-org-review", expectedAppSlug("my-org", "review"))
+}
+
 func TestFindExistingApp_WrongRole(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
