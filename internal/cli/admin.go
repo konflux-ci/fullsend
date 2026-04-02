@@ -726,19 +726,28 @@ func promptDispatchToken(ctx context.Context, client forge.Client, printer *ui.P
 		return "", fmt.Errorf("dispatch token cannot be empty")
 	}
 
-	// Verify the token can actually access .fullsend before storing it.
-	// A misconfigured PAT (wrong repo selected) will fail here with a
-	// clear error instead of silently breaking every future dispatch.
-	printer.StepStart("Verifying token can access " + forge.ConfigRepoName)
+	// Verify the token has actions:write on .fullsend by attempting to
+	// list workflows. GetRepo only checks metadata:read which is granted
+	// implicitly — it would pass even if .fullsend wasn't selected in the
+	// PAT's repo list. The actions/workflows endpoint requires explicit
+	// actions:read or actions:write permission on the specific repo.
+	printer.StepStart("Verifying token has Actions access to " + forge.ConfigRepoName)
 	verifyClient := gh.New(token)
-	if _, err := verifyClient.GetRepo(ctx, org, forge.ConfigRepoName); err != nil {
-		printer.StepFail("Token cannot access " + forge.ConfigRepoName)
-		return "", fmt.Errorf(
-			"the dispatch token does not have access to %s/%s; "+
-				"when creating the PAT, make sure you select 'Only select repositories' "+
-				"and choose the %s repository specifically",
-			org, forge.ConfigRepoName, forge.ConfigRepoName,
-		)
+	if _, err := verifyClient.GetLatestWorkflowRun(ctx, org, forge.ConfigRepoName, "agent.yaml"); err != nil {
+		// GetLatestWorkflowRun returns an error if the token can't access
+		// the Actions API on this repo. A "not found" error is fine — it
+		// means the token CAN access the repo but no runs exist yet.
+		if !forge.IsNotFound(err) {
+			printer.StepFail("Token does not have Actions access to " + forge.ConfigRepoName)
+			return "", fmt.Errorf(
+				"the dispatch token does not have Actions write access to %s/%s; "+
+					"when creating the PAT, make sure you:\n"+
+					"  1. Select 'Only select repositories'\n"+
+					"  2. Choose the %s repository\n"+
+					"  3. Grant 'Actions: Read and write' permission",
+				org, forge.ConfigRepoName, forge.ConfigRepoName,
+			)
+		}
 	}
 	printer.StepDone("Token verified")
 
