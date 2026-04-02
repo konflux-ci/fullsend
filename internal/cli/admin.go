@@ -670,10 +670,11 @@ func promptDispatchToken(ctx context.Context, client forge.Client, printer *ui.P
 
 	printer.Blank()
 	printer.StepInfo("In the browser:")
-	printer.StepInfo("  1. Under Repository access, select 'Only select repositories'")
-	printer.StepInfo("  2. Choose the .fullsend repository")
-	printer.StepInfo("  3. Click 'Generate token'")
-	printer.StepInfo("  4. Copy and paste the token below")
+	printer.StepInfo("  1. Under 'Repository access', select 'Only select repositories'")
+	printer.StepInfo("  2. Pick ONLY the .fullsend repository (not other repos)")
+	printer.StepInfo("  3. Verify 'Actions: Read and write' is checked under permissions")
+	printer.StepInfo("  4. Click 'Generate token'")
+	printer.StepInfo("  5. Copy and paste the token below")
 	printer.Blank()
 	printer.StepInfo("Paste the token here:")
 
@@ -689,7 +690,22 @@ func promptDispatchToken(ctx context.Context, client forge.Client, printer *ui.P
 		return "", fmt.Errorf("dispatch token cannot be empty")
 	}
 
-	printer.StepDone("Dispatch token received")
+	// Verify the token can actually access .fullsend before storing it.
+	// A misconfigured PAT (wrong repo selected) will fail here with a
+	// clear error instead of silently breaking every future dispatch.
+	printer.StepStart("Verifying token can access " + forge.ConfigRepoName)
+	verifyClient := gh.New(token)
+	if _, err := verifyClient.GetRepo(ctx, org, forge.ConfigRepoName); err != nil {
+		printer.StepFail("Token cannot access " + forge.ConfigRepoName)
+		return "", fmt.Errorf(
+			"the dispatch token does not have access to %s/%s; "+
+				"when creating the PAT, make sure you select 'Only select repositories' "+
+				"and choose the %s repository specifically",
+			org, forge.ConfigRepoName, forge.ConfigRepoName,
+		)
+	}
+	printer.StepDone("Token verified")
+
 	printer.Blank()
 	return token, nil
 }
