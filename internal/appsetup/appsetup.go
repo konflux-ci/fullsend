@@ -266,12 +266,7 @@ type manifestResponse struct {
 // GitHub's app creation page with a manifest, and waits for the
 // callback with the conversion code.
 func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCredentials, error) {
-	appCfg := ghTypes.AgentAppConfig(org, role)
-	manifest, err := json.Marshal(appCfg)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling app manifest: %w", err)
-	}
-
+	// Start the local listener first so we know the port for the redirect URL.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("starting local listener: %w", err)
@@ -282,6 +277,15 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 	formURL := fmt.Sprintf("http://127.0.0.1:%d/", port)
 	githubFormAction := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/new", org)
+
+	// Build the manifest with redirect_url included — GitHub requires it
+	// inside the JSON manifest, not as a separate form field.
+	appCfg := ghTypes.AgentAppConfig(org, role)
+	appCfg.RedirectURL = callbackURL
+	manifest, err := json.Marshal(appCfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling app manifest: %w", err)
+	}
 
 	type result struct {
 		creds *AppCredentials
@@ -302,7 +306,6 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 <p>Redirecting to GitHub...</p>
 <form id="manifest-form" method="post" action="%s">
   <input type="hidden" name="manifest" value="%s">
-  <input type="hidden" name="redirect_url" value="%s">
 </form>
 <script>document.getElementById('manifest-form').submit();</script>
 </body>
@@ -311,7 +314,6 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 			html.EscapeString(appCfg.Name),
 			html.EscapeString(githubFormAction),
 			html.EscapeString(string(manifest)),
-			html.EscapeString(callbackURL),
 		)
 		fmt.Fprint(w, page)
 	})

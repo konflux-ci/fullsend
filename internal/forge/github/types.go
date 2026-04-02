@@ -12,13 +12,24 @@ type AppPermissions struct {
 	Members        string `json:"members,omitempty"`
 }
 
-// AppConfig defines the configuration for creating a GitHub App.
+// HookAttributes configures the webhook for a GitHub App.
+// Even when webhooks are not used, GitHub requires this field in the manifest.
+type HookAttributes struct {
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
+}
+
+// AppConfig defines the configuration for creating a GitHub App via the
+// manifest flow. See https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 type AppConfig struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	URL         string         `json:"url"`
-	Permissions AppPermissions `json:"default_permissions"`
-	Events      []string       `json:"default_events"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	URL            string         `json:"url"`
+	HookAttributes HookAttributes `json:"hook_attributes"`
+	RedirectURL    string         `json:"redirect_url,omitempty"`
+	Public         bool           `json:"public"`
+	Permissions    AppPermissions `json:"default_permissions"`
+	Events         []string       `json:"default_events"`
 }
 
 // DefaultAgentRoles returns the standard set of agent roles.
@@ -36,6 +47,12 @@ func DefaultAgentRoles() []string {
 func AgentAppConfig(org, role string) AppConfig {
 	base := AppConfig{
 		URL: fmt.Sprintf("https://github.com/%s", org),
+		// hook_attributes is required by the manifest spec even when we
+		// don't use webhooks. Setting active: false disables delivery.
+		HookAttributes: HookAttributes{
+			URL:    fmt.Sprintf("https://github.com/%s", org),
+			Active: false,
+		},
 	}
 
 	switch role {
