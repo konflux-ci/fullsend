@@ -387,18 +387,29 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 
 	printer.Blank()
 
-	// Suggest manual app deletion.
+	// Open browser for manual app deletion.
 	// GitHub App uninstallation via API (DELETE /app/installations/{id}) requires
 	// JWT auth from the app's own private key, not a PAT. Since we authenticate
-	// with a PAT, we must direct the user to the browser instead. The correct
-	// URL for org-scoped apps is /organizations/{org}/settings/apps/{slug}/advanced
+	// with a PAT, we open the browser to the app's advanced settings page instead.
+	// The correct URL for org-scoped apps is /organizations/{org}/settings/apps/{slug}/advanced
 	// (the /advanced suffix is required to see the delete button; /settings/apps/{slug}
 	// alone is for user-scoped apps and will 404 for org-scoped ones).
 	if len(agentSlugs) > 0 {
-		printer.Header("Manual cleanup required")
-		printer.StepInfo("Delete these GitHub Apps manually:")
+		printer.Header("App cleanup")
+		printer.StepInfo("Opening browser for each app that needs to be deleted.")
+		printer.StepInfo("Click 'Delete GitHub App' on each page, then return here.")
+		printer.Blank()
+
+		browser := appsetup.DefaultBrowser{}
 		for _, slug := range agentSlugs {
-			printer.StepInfo(fmt.Sprintf("  https://github.com/apps/%s", slug))
+			deleteURL := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/%s/advanced", org, slug)
+			printer.StepStart(fmt.Sprintf("Opening %s settings...", slug))
+			if err := browser.Open(ctx, deleteURL); err != nil {
+				printer.StepWarn(fmt.Sprintf("Could not open browser: %v", err))
+				printer.StepInfo(fmt.Sprintf("  Delete manually at: %s", deleteURL))
+			} else {
+				printer.StepDone(fmt.Sprintf("Opened %s", slug))
+			}
 		}
 		printer.Blank()
 	}
