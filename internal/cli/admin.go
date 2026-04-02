@@ -415,7 +415,7 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 
 	printer.Blank()
 
-	// Open browser for manual app deletion.
+	// Check which apps actually exist before opening browser pages.
 	// GitHub App uninstallation via API (DELETE /app/installations/{id}) requires
 	// JWT auth from the app's own private key, not a PAT. Since we authenticate
 	// with a PAT, we open the browser to the app's advanced settings page instead.
@@ -423,23 +423,46 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 	// (the /advanced suffix is required to see the delete button; /settings/apps/{slug}
 	// alone is for user-scoped apps and will 404 for org-scoped ones).
 	if len(agentSlugs) > 0 {
-		printer.Header("App cleanup")
-		printer.StepInfo("Opening browser for each app that needs to be deleted.")
-		printer.StepInfo("Click 'Delete GitHub App' on each page, then return here.")
-		printer.Blank()
-
-		browser := appsetup.DefaultBrowser{}
-		for _, slug := range agentSlugs {
-			deleteURL := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/%s/advanced", org, slug)
-			printer.StepStart(fmt.Sprintf("Opening %s settings...", slug))
-			if err := browser.Open(ctx, deleteURL); err != nil {
-				printer.StepWarn(fmt.Sprintf("Could not open browser: %v", err))
-				printer.StepInfo(fmt.Sprintf("  Delete manually at: %s", deleteURL))
-			} else {
-				printer.StepDone(fmt.Sprintf("Opened %s", slug))
+		// Find which slugs correspond to real installed apps.
+		var existingSlugs []string
+		installations, listErr := client.ListOrgInstallations(ctx, org)
+		if listErr == nil {
+			installedSet := make(map[string]bool, len(installations))
+			for _, inst := range installations {
+				installedSet[inst.AppSlug] = true
 			}
+			for _, slug := range agentSlugs {
+				if installedSet[slug] {
+					existingSlugs = append(existingSlugs, slug)
+				} else {
+					printer.StepInfo(fmt.Sprintf("App %s not found, skipping", slug))
+				}
+			}
+		} else {
+			// Can't check — fall back to opening all of them.
+			printer.StepWarn("Could not verify which apps exist; opening all")
+			existingSlugs = agentSlugs
 		}
-		printer.Blank()
+
+		if len(existingSlugs) > 0 {
+			printer.Header("App cleanup")
+			printer.StepInfo("Opening browser for each app that needs to be deleted.")
+			printer.StepInfo("Click 'Delete GitHub App' on each page, then return here.")
+			printer.Blank()
+
+			browser := appsetup.DefaultBrowser{}
+			for _, slug := range existingSlugs {
+				deleteURL := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/%s/advanced", org, slug)
+				printer.StepStart(fmt.Sprintf("Opening %s settings...", slug))
+				if err := browser.Open(ctx, deleteURL); err != nil {
+					printer.StepWarn(fmt.Sprintf("Could not open browser: %v", err))
+					printer.StepInfo(fmt.Sprintf("  Delete manually at: %s", deleteURL))
+				} else {
+					printer.StepDone(fmt.Sprintf("Opened %s", slug))
+				}
+			}
+			printer.Blank()
+		}
 	}
 
 	if len(errs) > 0 {
