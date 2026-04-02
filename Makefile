@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap lint check fmt lint-adr-status lint-adr-numbers lint-adr-frontmatter
+.PHONY: help bootstrap lint check fmt lint-adr-status lint-adr-numbers lint-adr-frontmatter mindmap
 
 help:
 	@echo "Available targets:"
@@ -11,6 +11,7 @@ help:
 	@echo "  lint-adr-status      - Validate ADR statuses in all ADR files"
 	@echo "  lint-adr-numbers     - Check for duplicate ADR numeric identifiers"
 	@echo "  lint-adr-frontmatter - Validate ADR frontmatter and cross-references"
+	@echo "  mindmap              - Open the interactive document graph in a browser"
 
 # Install all development tools needed for linting, formatting, and pre-commit hooks.
 # Prerequisites: uv (https://docs.astral.sh/uv/) and go (https://go.dev/)
@@ -60,3 +61,6 @@ lint-adr-numbers:
 
 lint-adr-frontmatter:
 	@uv run --script ./hack/lint-adr-frontmatter
+
+mindmap:
+	@xdg-open docs/mindmap.html 2>/dev/null || open docs/mindmap.html 2>/dev/null || echo "Open docs/mindmap.html in your browser"
