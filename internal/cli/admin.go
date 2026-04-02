@@ -318,12 +318,6 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 	// Collect IDs for repos that will be enrolled.
 	enrolledRepoIDs := collectEnrolledRepoIDs(allRepos, enabledRepos)
 
-	// Dispatch token setup.
-	dispatchToken, err := promptDispatchToken(ctx, client, printer, org)
-	if err != nil {
-		return err
-	}
-
 	// Build agent entries for config.
 	agents := make([]config.AgentEntry, len(agentCreds))
 	for i, ac := range agentCreds {
@@ -337,13 +331,24 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 		return fmt.Errorf("getting authenticated user: %w", err)
 	}
 
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs)
+	// Build stack with empty dispatch token for preflight — we check scopes
+	// before prompting the user so we fail early on missing admin:org.
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs)
 
 	if err := runPreflight(ctx, stack, layers.OpInstall, client, printer); err != nil {
 		return err
 	}
-
 	printer.Blank()
+
+	// Dispatch token setup — runs after preflight confirms admin:org scope.
+	dispatchToken, err := promptDispatchToken(ctx, client, printer, org)
+	if err != nil {
+		return err
+	}
+
+	// Rebuild stack with the actual dispatch token.
+	stack = buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs)
+
 	printer.Header("Installing layers")
 	printer.Blank()
 
