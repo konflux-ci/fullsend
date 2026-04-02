@@ -854,13 +854,17 @@ func (c *LiveClient) GetWorkflowRun(ctx context.Context, owner, repo string, run
 }
 
 // DispatchWorkflow triggers a workflow_dispatch event on a workflow file.
+// GitHub returns 204 No Content on success (not 200 or 201).
 func (c *LiveClient) DispatchWorkflow(ctx context.Context, owner, repo, workflowFile, ref string, inputs map[string]string) error {
 	payload := map[string]any{
 		"ref":    ref,
 		"inputs": inputs,
 	}
-	resp, err := c.post(ctx, fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflowFile), payload)
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflowFile), payload)
 	if err != nil {
+		return fmt.Errorf("dispatch workflow %s: %w", workflowFile, err)
+	}
+	if err := checkStatus(resp, http.StatusNoContent); err != nil {
 		return fmt.Errorf("dispatch workflow %s: %w", workflowFile, err)
 	}
 	resp.Body.Close()
