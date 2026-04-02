@@ -340,7 +340,20 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 	}
 	printer.Blank()
 
-	// Dispatch token setup — runs after preflight confirms admin:org scope.
+	// Create the .fullsend config repo BEFORE prompting for the dispatch
+	// token. The user needs the repo to exist so they can select it when
+	// creating the fine-grained PAT in the browser. The config repo layer
+	// is idempotent, so running it again in the full stack is harmless.
+	configRepoLayer := layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate)
+	printer.Header("Preparing config repo")
+	printer.Blank()
+	if err := configRepoLayer.Install(ctx); err != nil {
+		return fmt.Errorf("creating config repo: %w", err)
+	}
+	printer.Blank()
+
+	// Dispatch token setup — the .fullsend repo now exists so the user
+	// can select it when creating the fine-grained PAT.
 	dispatchToken, err := promptDispatchToken(ctx, client, printer, org)
 	if err != nil {
 		return err
