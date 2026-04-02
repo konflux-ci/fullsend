@@ -275,3 +275,6 @@ func (c *codeownersErrorClient) SetOrgSecretRepos(context.Context, string, strin
 func (c *codeownersErrorClient) CreateOrUpdateFileOnBranch(context.Context, string, string, string, string, string, []byte) error {
 	return nil
 }
+func (c *codeownersErrorClient) DispatchWorkflow(context.Context, string, string, string, string, map[string]string) error {
+	return nil
+}

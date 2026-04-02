@@ -853,6 +853,20 @@ func (c *LiveClient) GetWorkflowRun(ctx context.Context, owner, repo string, run
 	}, nil
 }
 
+// DispatchWorkflow triggers a workflow_dispatch event on a workflow file.
+func (c *LiveClient) DispatchWorkflow(ctx context.Context, owner, repo, workflowFile, ref string, inputs map[string]string) error {
+	payload := map[string]any{
+		"ref":    ref,
+		"inputs": inputs,
+	}
+	resp, err := c.post(ctx, fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflowFile), payload)
+	if err != nil {
+		return fmt.Errorf("dispatch workflow %s: %w", workflowFile, err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
 // ListOrgInstallations lists app installations for an organization.
 func (c *LiveClient) ListOrgInstallations(ctx context.Context, org string) ([]forge.Installation, error) {
 	resp, err := c.get(ctx, fmt.Sprintf("/orgs/%s/installations?per_page=100", org))
