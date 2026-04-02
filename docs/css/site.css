@@ -419,39 +419,46 @@ a:hover { color: var(--fs-text-link-hover); }
   line-height: 1.5;
 }
 
-/* --- Illustrations row --- */
-.illustrations {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--fs-space-6);
-  margin-top: var(--fs-space-12);
+/* --- Contributors --- */
+.contributors {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--fs-space-3);
+  margin: var(--fs-space-8) auto var(--fs-space-10);
+  max-width: 600px;
 }
 
-.illustration-card {
-  border-radius: var(--fs-radius-xl);
+.contributors a {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
   overflow: hidden;
-  border: 1px solid var(--fs-border-muted);
-  transition: border-color var(--fs-transition-fast);
+  border: 2px solid var(--fs-border-muted);
+  transition: border-color var(--fs-transition-fast), transform var(--fs-transition-fast);
 }
 
-.illustration-card:hover {
+.contributors a:hover {
   border-color: var(--fs-accent-primary);
+  transform: scale(1.15);
 }
 
-.illustration-card img {
+.contributors img {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: 100%;
   object-fit: cover;
 }
 
-.illustration-card figcaption {
-  padding: var(--fs-space-4) var(--fs-space-6);
-  font-size: var(--fs-text-sm);
-  color: var(--fs-text-secondary);
-  font-family: var(--fs-font-heading);
-  font-weight: 500;
-  background: var(--fs-bg-primary);
-  transition: background-color var(--fs-transition-base);
+/* --- Stars badge --- */
+.nav-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fs-space-1);
+}
+
+.nav-stars svg {
+  color: var(--fs-color-spot-gold);
 }
 
 /* --- CTA Section --- */
@@ -512,8 +519,7 @@ code {
   .section-header h2 { font-size: var(--fs-text-2xl); }
 
   .diff-grid,
-  .problems-grid,
-  .illustrations { grid-template-columns: 1fr; }
+  .problems-grid { grid-template-columns: 1fr; }
 
   .site-nav { gap: var(--fs-space-3); }
   .site-nav .nav-link { display: none; }
