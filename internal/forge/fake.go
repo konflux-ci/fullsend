@@ -43,9 +43,10 @@ type FakeClient struct {
 	WorkflowRuns      map[string]*WorkflowRun // key: "owner/repo/workflow"
 	AuthenticatedUser string
 	Installations     []Installation
-	Secrets           map[string]bool // key: "owner/repo/name"
-	TokenScopes       []string        // scopes returned by GetTokenScopes
-	VariablesExist    map[string]bool // key: "owner/repo/name"
+	Secrets           map[string]bool             // key: "owner/repo/name"
+	PullRequests      map[string][]ChangeProposal // key: "owner/repo"
+	TokenScopes       []string                    // scopes returned by GetTokenScopes
+	VariablesExist    map[string]bool             // key: "owner/repo/name"
 
 	// Org-level secret state
 	OrgSecrets       map[string]bool    // key: "org/name"
@@ -235,6 +236,30 @@ func (f *FakeClient) CreateFileOnBranch(_ context.Context, owner, repo, branch, 
 	return nil
 }
 
+func (f *FakeClient) CreateOrUpdateFileOnBranch(_ context.Context, owner, repo, branch, path, message string, content []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("CreateOrUpdateFileOnBranch"); e != nil {
+		return e
+	}
+
+	f.CreatedFiles = append(f.CreatedFiles, FileRecord{
+		Owner:   owner,
+		Repo:    repo,
+		Path:    path,
+		Branch:  branch,
+		Message: message,
+		Content: content,
+	})
+	// Also update FileContents so subsequent reads see the new content.
+	if f.FileContents == nil {
+		f.FileContents = make(map[string][]byte)
+	}
+	f.FileContents[owner+"/"+repo+"/"+path] = content
+	return nil
+}
+
 func (f *FakeClient) CreateChangeProposal(_ context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -253,7 +278,7 @@ func (f *FakeClient) CreateChangeProposal(_ context.Context, owner, repo, title,
 	return &cp, nil
 }
 
-func (f *FakeClient) ListRepoPullRequests(_ context.Context, _, _ string) ([]ChangeProposal, error) {
+func (f *FakeClient) ListRepoPullRequests(_ context.Context, owner, repo string) ([]ChangeProposal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -261,6 +286,11 @@ func (f *FakeClient) ListRepoPullRequests(_ context.Context, _, _ string) ([]Cha
 		return nil, e
 	}
 
+	if f.PullRequests != nil {
+		if prs, ok := f.PullRequests[owner+"/"+repo]; ok {
+			return prs, nil
+		}
+	}
 	return []ChangeProposal{}, nil
 }
 

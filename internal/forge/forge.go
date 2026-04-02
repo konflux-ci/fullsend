@@ -79,6 +79,9 @@ type Client interface {
 	// Branch operations
 	CreateBranch(ctx context.Context, owner, repo, branchName string) error
 	CreateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error
+	// CreateOrUpdateFileOnBranch creates or updates a file on a specific branch.
+	// Combines SHA-aware upsert with branch targeting.
+	CreateOrUpdateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error
 
 	// Change proposals (PRs/MRs)
 	CreateChangeProposal(ctx context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error)

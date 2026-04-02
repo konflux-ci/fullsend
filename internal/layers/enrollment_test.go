@@ -82,6 +82,33 @@ func TestEnrollmentLayer_Install_SkipsAlreadyEnrolled(t *testing.T) {
 	require.Len(t, client.CreatedProposals, 1)
 }
 
+func TestEnrollmentLayer_Install_UpdatesExistingPR(t *testing.T) {
+	client := &forge.FakeClient{
+		PullRequests: map[string][]forge.ChangeProposal{
+			"test-org/repo-a": {
+				{Title: "Connect to fullsend agent pipeline", URL: "https://github.com/test-org/repo-a/pull/1", Number: 1},
+			},
+		},
+	}
+	repos := []string{"repo-a"}
+	defaults := map[string]string{"repo-a": "main"}
+	layer, _ := newEnrollmentLayer(t, client, repos, defaults)
+
+	err := layer.Install(context.Background())
+	require.NoError(t, err)
+
+	// Should have updated the file on the branch, not created a new PR.
+	require.Len(t, client.CreatedFiles, 1)
+	assert.Equal(t, "repo-a", client.CreatedFiles[0].Repo)
+	assert.Equal(t, enrollBranch, client.CreatedFiles[0].Branch)
+	assert.Contains(t, string(client.CreatedFiles[0].Content), "FULLSEND_DISPATCH_TOKEN")
+
+	// Should NOT have created a new branch or new PR.
+	assert.Empty(t, client.CreatedBranches)
+	// Should not have created any new PRs (the existing one was reused).
+	assert.Empty(t, client.CreatedProposals)
+}
+
 func TestEnrollmentLayer_Install_ContinuesOnError(t *testing.T) {
 	// Use a custom client that fails CreateFileOnBranch only for repo-a.
 	// This simulates a real failure (e.g., permission denied) that should
@@ -197,17 +224,17 @@ func TestEnrollmentLayer_Analyze_Partial(t *testing.T) {
 	assert.Contains(t, report.WouldFix[0], "repo-b")
 }
 
-// perRepoFileErrorClient wraps FakeClient but fails CreateFileOnBranch for a specific repo.
+// perRepoFileErrorClient wraps FakeClient but fails CreateOrUpdateFileOnBranch for a specific repo.
 type perRepoFileErrorClient struct {
 	*forge.FakeClient
 	failRepo string
 }
 
-func (c *perRepoFileErrorClient) CreateFileOnBranch(_ context.Context, owner, repo, branch, path, message string, content []byte) error {
+func (c *perRepoFileErrorClient) CreateOrUpdateFileOnBranch(_ context.Context, owner, repo, branch, path, message string, content []byte) error {
 	if repo == c.failRepo {
 		return fmt.Errorf("file write failed for %s", repo)
 	}
-	return c.FakeClient.CreateFileOnBranch(context.Background(), owner, repo, branch, path, message, content)
+	return c.FakeClient.CreateOrUpdateFileOnBranch(context.Background(), owner, repo, branch, path, message, content)
 }
 
 // GetFileContent delegates to the embedded FakeClient.

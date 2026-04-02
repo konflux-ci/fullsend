@@ -426,6 +426,46 @@ func (c *LiveClient) CreateOrUpdateFile(ctx context.Context, owner, repo, path, 
 	})
 }
 
+// CreateOrUpdateFileOnBranch creates or updates a file on a specific branch.
+// Like CreateOrUpdateFile, it fetches the existing SHA before updating.
+// Retries on 404/409 for async repo init and branch ref races.
+func (c *LiveClient) CreateOrUpdateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error {
+	apiPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path)
+
+	return c.retryOnTransient(ctx, path, func() error {
+		// Try to get existing file on the branch for its SHA.
+		existingResp, err := c.do(ctx, http.MethodGet, apiPath+"?ref="+branch, nil)
+		if err != nil {
+			return fmt.Errorf("check existing file on branch: %w", err)
+		}
+
+		payload := map[string]any{
+			"message": message,
+			"content": base64.StdEncoding.EncodeToString(content),
+			"branch":  branch,
+		}
+
+		if existingResp.StatusCode == http.StatusOK {
+			var existing struct {
+				SHA string `json:"sha"`
+			}
+			if err := decodeJSON(existingResp, &existing); err != nil {
+				return fmt.Errorf("decode existing file: %w", err)
+			}
+			payload["sha"] = existing.SHA
+		} else {
+			existingResp.Body.Close()
+		}
+
+		resp, err := c.put(ctx, apiPath, payload)
+		if err != nil {
+			return fmt.Errorf("create or update file %s on branch %s: %w", path, branch, err)
+		}
+		resp.Body.Close()
+		return nil
+	})
+}
+
 // putFileWithRetry wraps a single PUT to the Contents API with retry on
 // transient errors (404 from async repo init, 409 from branch ref races).
 func (c *LiveClient) putFileWithRetry(ctx context.Context, apiPath string, payload map[string]any, path string) error {

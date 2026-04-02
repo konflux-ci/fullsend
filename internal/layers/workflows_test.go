@@ -272,3 +272,6 @@ func (c *codeownersErrorClient) DeleteOrgSecret(context.Context, string, string)
 func (c *codeownersErrorClient) SetOrgSecretRepos(context.Context, string, string, []int64) error {
 	return nil
 }
+func (c *codeownersErrorClient) CreateOrUpdateFileOnBranch(context.Context, string, string, string, string, string, []byte) error {
+	return nil
+}

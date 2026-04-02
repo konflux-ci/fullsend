@@ -3,7 +3,6 @@ package layers
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/ui"
@@ -74,10 +73,10 @@ func (l *EnrollmentLayer) Install(ctx context.Context) error {
 	return nil
 }
 
-// enrollRepo creates an enrollment PR for a single repo.
-// Idempotent: skips repos that already have the shim workflow on the
-// default branch. Also handles partial state from previous runs (e.g.,
-// branch exists but PR was not created).
+// enrollRepo creates an enrollment PR for a single repo, or updates the
+// shim workflow on an existing enrollment branch if a PR already exists.
+// Idempotent: skips repos that already have the shim workflow merged on
+// the default branch.
 func (l *EnrollmentLayer) enrollRepo(ctx context.Context, repo string) error {
 	// Check if already enrolled (shim workflow on default branch).
 	_, err := l.client.GetFileContent(ctx, l.org, repo, shimWorkflowPath)
@@ -87,12 +86,13 @@ func (l *EnrollmentLayer) enrollRepo(ctx context.Context, repo string) error {
 	}
 
 	// Check if there's already an open enrollment PR from a previous run.
+	// If so, update the shim workflow on the branch to reflect the latest
+	// content (e.g., security model changes) rather than skipping.
 	prs, err := l.client.ListRepoPullRequests(ctx, l.org, repo)
 	if err == nil {
 		for _, pr := range prs {
 			if pr.Title == "Connect to fullsend agent pipeline" {
-				l.ui.StepInfo(fmt.Sprintf("%s has pending enrollment PR: %s", repo, pr.URL))
-				return nil
+				return l.updateExistingEnrollment(ctx, repo, pr)
 			}
 		}
 	}
@@ -103,25 +103,16 @@ func (l *EnrollmentLayer) enrollRepo(ctx context.Context, repo string) error {
 	// Idempotent: if the branch exists from a previous partial run, proceed.
 	if err := l.client.CreateBranch(ctx, l.org, repo, enrollBranch); err != nil {
 		if !forge.IsNotFound(err) {
-			// Non-404 errors from CreateBranch could be "reference already exists"
-			// (HTTP 422). Treat any error here as non-fatal and try to continue
-			// with the file write — if the branch truly doesn't exist, that will
-			// fail with a clear error.
 			l.ui.StepInfo(fmt.Sprintf("Branch %s may already exist, continuing", enrollBranch))
 		}
 	}
 
-	// Write shim workflow to the branch.
-	// If the file already exists on the branch (from a previous partial run),
-	// CreateFileOnBranch returns 422 "sha wasn't supplied". In that case the
-	// file is already there, so we proceed to PR creation.
+	// Write shim workflow to the branch using upsert to handle re-runs
+	// where the branch exists with an old version of the file.
 	content := l.shimWorkflowContent()
-	if err := l.client.CreateFileOnBranch(ctx, l.org, repo, enrollBranch, shimWorkflowPath,
+	if err := l.client.CreateOrUpdateFileOnBranch(ctx, l.org, repo, enrollBranch, shimWorkflowPath,
 		"chore: add fullsend shim workflow", []byte(content)); err != nil {
-		if !strings.Contains(err.Error(), "sha") {
-			return fmt.Errorf("writing shim workflow: %w", err)
-		}
-		l.ui.StepInfo(fmt.Sprintf("Shim workflow already exists on branch %s", enrollBranch))
+		return fmt.Errorf("writing shim workflow: %w", err)
 	}
 
 	// Create enrollment PR.
@@ -144,6 +135,22 @@ func (l *EnrollmentLayer) enrollRepo(ctx context.Context, repo string) error {
 	}
 
 	l.ui.StepDone(fmt.Sprintf("Created enrollment PR for %s", repo))
+	l.ui.PRLink(repo, pr.URL)
+	return nil
+}
+
+// updateExistingEnrollment updates the shim workflow on an existing
+// enrollment branch so the PR always reflects the latest content.
+func (l *EnrollmentLayer) updateExistingEnrollment(ctx context.Context, repo string, pr forge.ChangeProposal) error {
+	l.ui.StepStart(fmt.Sprintf("Updating shim workflow on %s", repo))
+
+	content := l.shimWorkflowContent()
+	if err := l.client.CreateOrUpdateFileOnBranch(ctx, l.org, repo, enrollBranch, shimWorkflowPath,
+		"chore: update fullsend shim workflow", []byte(content)); err != nil {
+		return fmt.Errorf("updating shim workflow: %w", err)
+	}
+
+	l.ui.StepDone(fmt.Sprintf("Updated enrollment PR for %s", repo))
 	l.ui.PRLink(repo, pr.URL)
 	return nil
 }
