@@ -340,15 +340,21 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 	}
 	printer.Blank()
 
-	// Create the .fullsend config repo BEFORE prompting for the dispatch
-	// token. The user needs the repo to exist so they can select it when
-	// creating the fine-grained PAT in the browser. The config repo layer
-	// is idempotent, so running it again in the full stack is harmless.
-	configRepoLayer := layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate)
+	// Create the .fullsend config repo and write workflow files BEFORE
+	// prompting for the dispatch token. The user needs the repo to exist
+	// so they can select it when creating the fine-grained PAT, and the
+	// agent.yaml workflow must exist so we can verify the PAT by attempting
+	// a real dispatch. Both layers are idempotent, so running them again
+	// in the full stack is harmless.
 	printer.Header("Preparing config repo")
 	printer.Blank()
+	configRepoLayer := layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate)
 	if err := configRepoLayer.Install(ctx); err != nil {
 		return fmt.Errorf("creating config repo: %w", err)
+	}
+	workflowsLayer := layers.NewWorkflowsLayer(org, client, printer, user)
+	if err := workflowsLayer.Install(ctx); err != nil {
+		return fmt.Errorf("writing workflows: %w", err)
 	}
 	printer.Blank()
 
@@ -731,30 +737,34 @@ func promptDispatchToken(ctx context.Context, client forge.Client, printer *ui.P
 		return "", fmt.Errorf("dispatch token cannot be empty")
 	}
 
-	// Verify the token has actions:write on .fullsend by attempting to
-	// list workflows. GetRepo only checks metadata:read which is granted
-	// implicitly — it would pass even if .fullsend wasn't selected in the
-	// PAT's repo list. The actions/workflows endpoint requires explicit
-	// actions:read or actions:write permission on the specific repo.
-	printer.StepStart("Verifying token has Actions access to " + forge.ConfigRepoName)
+	// Verify the token can actually dispatch workflows on .fullsend by
+	// triggering a real workflow_dispatch event. This is the exact operation
+	// the shim will perform, so if this works, the shim will work.
+	// The dispatch triggers agent.yaml with a "verify" event type — the
+	// workflow will run but the entrypoint script will see it's a verify
+	// event and exit cleanly.
+	printer.StepStart("Verifying token can dispatch workflows on " + forge.ConfigRepoName)
 	verifyClient := gh.New(token)
-	if _, err := verifyClient.GetLatestWorkflowRun(ctx, org, forge.ConfigRepoName, "agent.yaml"); err != nil {
-		// GetLatestWorkflowRun returns an error if the token can't access
-		// the Actions API on this repo. A "not found" error is fine — it
-		// means the token CAN access the repo but no runs exist yet.
-		if !forge.IsNotFound(err) {
-			printer.StepFail("Token does not have Actions access to " + forge.ConfigRepoName)
-			return "", fmt.Errorf(
-				"the dispatch token does not have Actions write access to %s/%s; "+
-					"when creating the PAT, make sure you:\n"+
-					"  1. Select 'Only select repositories'\n"+
-					"  2. Choose the %s repository\n"+
-					"  3. Grant 'Actions: Read and write' permission",
-				org, forge.ConfigRepoName, forge.ConfigRepoName,
-			)
-		}
+	err = verifyClient.DispatchWorkflow(ctx, org, forge.ConfigRepoName, "agent.yaml", "main", map[string]string{
+		"event_type":    "verify",
+		"source_repo":   org + "/" + forge.ConfigRepoName,
+		"event_payload": "{}",
+	})
+	if err != nil {
+		printer.StepFail("Token cannot dispatch workflows on " + forge.ConfigRepoName)
+		printer.Blank()
+		printer.ErrorBox("Dispatch token verification failed",
+			"The token could not trigger a workflow on "+org+"/"+forge.ConfigRepoName+".\n\n"+
+				"This usually means the PAT was not configured correctly.\n"+
+				"Delete it at https://github.com/settings/tokens and recreate with:\n"+
+				"  1. Resource owner: "+org+"\n"+
+				"  2. Repository access: Only select repositories → "+forge.ConfigRepoName+"\n"+
+				"  3. Permissions: Actions → Read and write\n\n"+
+				"Error: "+err.Error(),
+		)
+		return "", fmt.Errorf("dispatch token verification failed")
 	}
-	printer.StepDone("Token verified")
+	printer.StepDone("Token verified — test dispatch succeeded")
 
 	printer.Blank()
 	return token, nil

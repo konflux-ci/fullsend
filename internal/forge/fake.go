@@ -410,6 +410,17 @@ func (f *FakeClient) GetWorkflowRun(_ context.Context, owner, repo string, runID
 	return nil, fmt.Errorf("workflow run %d not found in %s/%s", runID, owner, repo)
 }
 
+func (f *FakeClient) DispatchWorkflow(_ context.Context, _, _, _, _ string, _ map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("DispatchWorkflow"); e != nil {
+		return e
+	}
+
+	return nil
+}
+
 func (f *FakeClient) ListOrgInstallations(_ context.Context, _ string) ([]Installation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
