@@ -1,0 +1,308 @@
+# Admin E2E Tests Design
+
+End-to-end tests for the `fullsend admin install` and `fullsend admin uninstall`
+CLI commands, exercising real GitHub APIs and browser-based GitHub App creation.
+
+## Context
+
+The admin CLI manages a 4-layer installation stack (config-repo, workflows,
+secrets, enrollment) and creates GitHub Apps via the manifest flow. All existing
+tests use `forge.FakeClient` or `httptest.Server` mocks. This spec defines e2e
+tests that hit a real GitHub organization to verify the full install/uninstall
+lifecycle.
+
+## Decisions
+
+- **Full layer stack coverage.** The e2e test exercises all 4 layers, not a
+  subset. Install creates every resource; uninstall tears them down.
+- **Real GitHub App creation via Playwright.** The manifest flow opens a browser
+  to create GitHub Apps. We automate this with `playwright-go` rather than
+  skipping it. If `playwright-go` proves too immature, the fallback is a Go test
+  orchestrator shelling out to a Node.js Playwright script.
+- **Interface injection architecture.** The existing `appsetup.BrowserOpener`
+  and `appsetup.Prompter` interfaces are the seams. The e2e test injects
+  Playwright-backed implementations rather than subprocess-orchestrating the CLI.
+- **Dedicated test org: `halfsend`.** A manually-created GitHub org with a bot
+  user (`botsend`) that has admin access. The org name is hardcoded in tests.
+- **Persistent browser context for auth.** A one-time manual login saves
+  Playwright state. Test runs reuse this state without re-authenticating.
+- **Dual cleanup strategy.** Teardown-first (delete stale resources before each
+  run) combined with `t.Cleanup()` deferred cleanup (catch mid-test failures).
+- **App deletion via Playwright UI.** Cleanup deletes GitHub Apps by navigating
+  to their settings pages and clicking delete, rather than using JWT-based API
+  auth.
+
+## File Structure
+
+```
+e2e/
+  admin/
+    admin_test.go        # TestAdminInstallUninstall
+    browser.go           # PlaywrightBrowserOpener (appsetup.BrowserOpener)
+    prompter.go          # AutoPrompter (appsetup.Prompter)
+    cleanup.go           # Teardown-first + deferred cleanup helpers
+    testutil.go          # Shared test helpers (env var loading, client setup)
+    cmd/
+      setup-auth/
+        main.go          # One-time interactive auth state bootstrap
+```
+
+All files use `//go:build e2e` so they never compile during `go test ./...`.
+
+## Configuration
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `E2E_GITHUB_TOKEN` | Yes | PAT for the `botsend` user with org admin, repo, delete_repo scopes |
+| `E2E_BROWSER_STATE_DIR` | Yes | Path to Playwright persistent browser context (pre-authenticated as botsend) |
+
+The test org (`halfsend`) and bot user (`botsend`) are constants in the test
+code, not configurable.
+
+## Function Access
+
+The `runAppSetup()`, `runInstall()`, `runUninstall()`, and `runAnalyze()`
+functions are unexported in the `cli` package. The e2e test does NOT call them
+directly. Instead, the test reproduces the wiring logic from `admin.go`:
+
+1. Creates a `github.LiveClient` with the token.
+2. Creates a `ui.Printer`.
+3. Constructs `appsetup.Setup` with injected Playwright implementations.
+4. Calls `setup.Run()` for each role (same as `runAppSetup` does).
+5. Discovers repos, builds config, builds the layer stack, calls
+   `stack.InstallAll()` / `stack.UninstallAll()` / `stack.AnalyzeAll()`.
+
+This duplicates some wiring but keeps the test decoupled from the CLI package
+internals. The wiring is simple (constructing structs and calling public APIs)
+and unlikely to drift.
+
+## Test Org Prerequisites
+
+The `halfsend` org must contain at least one repository (besides `.fullsend`)
+for enrollment testing. A repo named `test-repo` should exist with a `main`
+branch and at least one commit. This repo is created manually once and left
+in place across test runs.
+
+The test enables `test-repo` for enrollment via `--repo test-repo` equivalent
+(passing `[]string{"test-repo"}` to the config builder).
+
+## Test Flow
+
+`TestAdminInstallUninstall` is a single test function that exercises the full
+lifecycle:
+
+### Phase 1: Teardown-first cleanup
+
+Scan the `halfsend` org and delete stale resources from previous runs:
+
+1. Delete the `.fullsend` repo if it exists.
+2. List org installations. For any with slug matching `fullsend-halfsend*`,
+   use Playwright to navigate to the app settings page and delete the app.
+3. Close any open PRs in test repos that were created by previous runs.
+
+### Phase 2: Install
+
+1. Create a `github.LiveClient` using `E2E_GITHUB_TOKEN`.
+2. Initialize a Playwright browser from the persistent context at
+   `E2E_BROWSER_STATE_DIR`.
+3. Construct `appsetup.Setup` with:
+   - `PlaywrightBrowserOpener` as the `BrowserOpener`
+   - `AutoPrompter` as the `Prompter`
+   - The live GitHub client
+4. Call `appsetup.Setup.Run()` for all 4 default roles (fullsend, triage,
+   coder, review).
+   - For each role, `PlaywrightBrowserOpener.Open()` navigates to the local
+     manifest form URL, follows the redirect to GitHub, and clicks "Create
+     GitHub App" on GitHub's confirmation page.
+   - After creation, if the app isn't auto-installed, Playwright navigates to
+     the installation URL and clicks "Install".
+5. Register `t.Cleanup()` to delete each created app (via Playwright settings
+   page automation).
+6. Build the layer stack and call `stack.InstallAll()` with the returned
+   credentials.
+   - Register `t.Cleanup()` to delete the `.fullsend` repo.
+
+### Phase 3: Verify install
+
+Assert via the GitHub API (using the live client):
+
+1. `.fullsend` repo exists in `halfsend`.
+2. `config.yaml` exists and parses as a valid `config.OrgConfig`.
+3. Workflow files exist: `.github/workflows/agent.yaml`,
+   `.github/workflows/repo-onboard.yaml`, `CODEOWNERS`.
+4. Secrets exist for each role: `FULLSEND_<ROLE>_APP_PRIVATE_KEY`.
+5. Variables exist for each role: `FULLSEND_<ROLE>_APP_ID`.
+6. Enrollment PRs were created for any enabled repos.
+
+### Phase 4: Analyze
+
+Build a fresh layer stack and call `stack.AnalyzeAll()`. Assert all layers
+report `StatusInstalled`.
+
+### Phase 5: Uninstall
+
+Build a minimal layer stack (same as `runUninstall` does) and call
+`stack.UninstallAll()`. No confirmation prompt needed since we're calling
+the stack directly, not the CLI.
+
+### Phase 6: Verify uninstall
+
+1. Assert `.fullsend` repo no longer exists (API returns 404).
+2. Assert enrollment PRs are still open (uninstall doesn't close them by
+   design -- this may change).
+
+### Phase 7: Cleanup
+
+`t.Cleanup()` handlers run in LIFO order:
+1. Delete GitHub Apps via Playwright UI automation.
+2. Delete `.fullsend` repo if it still exists (safety net).
+3. Close any enrollment PRs.
+
+## PlaywrightBrowserOpener
+
+Implements `appsetup.BrowserOpener`. Wraps a `playwright-go` browser with
+persistent context.
+
+```go
+type PlaywrightBrowserOpener struct {
+    page playwright.Page
+}
+
+func (b *PlaywrightBrowserOpener) Open(ctx context.Context, url string) error {
+    // Navigate to the URL (either local manifest form or GitHub install page)
+    b.page.Goto(url)
+
+    // Detect which page we're on and act accordingly:
+    // 1. Local manifest form → auto-submits, redirects to GitHub
+    // 2. GitHub "Register new GitHub App" → click "Create GitHub App" button
+    // 3. GitHub app install page → click "Install" button
+    //
+    // Wait for navigation to complete and handle each case.
+}
+```
+
+Key implementation details:
+
+- The manifest form auto-submits via JavaScript, so Playwright just needs to
+  wait for the GitHub confirmation page to load.
+- On GitHub's "Register new GitHub App" page, click the submit/create button.
+- On the app installation page, select "All repositories" and click "Install".
+- After the GitHub App is created, GitHub redirects back to the local callback
+  URL. Playwright follows this redirect, which delivers the code to the local
+  HTTP server. The `appsetup` code handles the code exchange.
+- Each `Open()` call blocks until the browser interaction completes and the
+  page navigates to a terminal state (success page or callback).
+
+## AutoPrompter
+
+Implements `appsetup.Prompter` for non-interactive use:
+
+```go
+type AutoPrompter struct{}
+
+func (AutoPrompter) WaitForEnter(prompt string) error {
+    return nil // No human needed; Playwright handled the browser interaction
+}
+
+func (AutoPrompter) Confirm(prompt string) (bool, error) {
+    return true, nil // Always accept (reuse existing apps, etc.)
+}
+```
+
+## App Deletion via Playwright
+
+GitHub Apps can be deleted through their settings page at
+`https://github.com/settings/apps/<slug>`. The Playwright-based cleanup:
+
+1. Navigate to `https://github.com/settings/apps/<slug>/advanced`.
+2. Scroll to the "Danger zone" section.
+3. Click "Delete GitHub App".
+4. Confirm the deletion in the modal dialog.
+
+This is called both during teardown-first cleanup and via `t.Cleanup()`.
+
+## CI Integration
+
+`.github/workflows/e2e.yml`:
+
+```yaml
+name: E2E Tests
+on:
+  push:
+    paths: ['**/*.go', 'go.mod', 'go.sum']
+  pull_request:
+    paths: ['**/*.go', 'go.mod', 'go.sum']
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-halfsend
+  cancel-in-progress: false  # Let running tests finish; don't corrupt state
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Playwright browsers
+        run: go run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps chromium
+      - name: Restore browser auth state
+        run: echo "$E2E_BROWSER_STATE" | base64 -d | tar xz -C /tmp/pw-state
+        env:
+          E2E_BROWSER_STATE: ${{ secrets.E2E_BROWSER_STATE }}
+      - name: Run e2e tests
+        run: go test -tags e2e -v -timeout 10m ./e2e/admin/
+        env:
+          E2E_GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
+          E2E_BROWSER_STATE_DIR: /tmp/pw-state
+```
+
+Key details:
+- `concurrency.group: e2e-halfsend` prevents parallel runs from colliding on
+  the shared test org.
+- `cancel-in-progress: false` lets running tests complete their cleanup rather
+  than being killed mid-mutation.
+- Browser auth state is stored as a base64-encoded tarball in a repository
+  secret. This needs periodic refresh when the GitHub session expires.
+
+## Auth State Bootstrap
+
+A one-time setup tool at `e2e/admin/cmd/setup-auth/main.go`:
+
+1. Launches Playwright with a visible Chromium browser (headed mode).
+2. Navigates to `https://github.com/login`.
+3. Prints instructions: "Log in as botsend, then press Enter in the terminal."
+4. Waits for the developer to complete login (including 2FA if needed).
+5. Saves the browser storage state to the specified directory.
+6. Prints instructions for converting to a CI secret:
+   `tar czf - -C <dir> . | base64 > state.b64`
+
+Usage:
+```
+E2E_BROWSER_STATE_DIR=/tmp/pw-state go run ./e2e/admin/cmd/setup-auth/
+```
+
+## Risks and Mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| `playwright-go` immaturity | Fallback: shell out to Node.js Playwright script from Go test |
+| GitHub UI changes break selectors | Use data-testid or role-based selectors where possible; accept some fragility |
+| Browser auth state expires | Document refresh process; CI job can alert on auth failures |
+| Rate limiting on GitHub API | Single test run with cleanup; concurrency group prevents parallel runs |
+| Test leaves orphaned resources | Dual cleanup (teardown-first + t.Cleanup) catches most cases; manual cleanup documented |
+| Flaky network/API responses | Retry logic for API calls; generous timeouts; test marked as flaky-tolerant in CI |
+
+## Out of Scope
+
+- Testing the `fullsend admin analyze` command as a standalone flow (it's
+  exercised as a verification step within the install test).
+- Testing with multiple repos enabled (start with 0-1 enabled repos to keep
+  the test fast).
+- Testing the dry-run flag.
+- Testing error recovery (e.g., partial install failure).
+- Automating GitHub App installation approval (the manifest flow auto-installs
+  for org-owned apps created by org admins).
