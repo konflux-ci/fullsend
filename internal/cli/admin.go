@@ -352,7 +352,11 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 
 // runUninstall tears down the fullsend installation.
 func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer, org string) error {
-	// Try to load existing config for agent info.
+	// Try to load agent slugs from existing config. If the .fullsend repo
+	// is already gone (e.g., previous partial uninstall), fall back to the
+	// default naming convention so we can still guide the user to delete
+	// the apps. Without this fallback, a partial uninstall leaves orphaned
+	// apps that block reinstallation (PEM keys are one-shot).
 	var agentSlugs []string
 	cfgData, err := client.GetFileContent(ctx, org, forge.ConfigRepoName, "config.yaml")
 	if err == nil {
@@ -361,6 +365,13 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 				agentSlugs = append(agentSlugs, agent.Slug)
 			}
 		}
+	}
+	if len(agentSlugs) == 0 {
+		// Config unavailable — assume default app naming convention.
+		for _, role := range config.DefaultAgentRoles() {
+			agentSlugs = append(agentSlugs, appsetup.ExpectedAppSlug(org, role))
+		}
+		printer.StepInfo("Config repo unavailable; using default app names")
 	}
 
 	// Build a minimal stack for uninstall.

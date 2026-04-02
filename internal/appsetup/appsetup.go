@@ -138,7 +138,7 @@ func (s *Setup) WithSecretExists(fn SecretExistsFunc) *Setup {
 //  4. If not found, run the manifest flow to create a new app.
 //  5. After creation, ensure the app is installed on the org.
 func (s *Setup) Run(ctx context.Context, org, role string) (*AppCredentials, error) {
-	slug := expectedAppSlug(org, role)
+	slug := ExpectedAppSlug(org, role)
 	s.ui.StepStart(fmt.Sprintf("Checking for existing app: %s", slug))
 
 	inst, found, err := s.findExistingInstallation(ctx, org, role, slug)
@@ -470,9 +470,10 @@ func (s *Setup) ensureInstalled(ctx context.Context, org, slug string) error {
 	return fmt.Errorf("app %s was not found in org %s after installation attempt", slug, org)
 }
 
-// expectedAppSlug returns the conventional app slug for a given org and role.
+// ExpectedAppSlug returns the conventional app slug for a given org and role.
 // This matches the naming convention used by ghTypes.AgentAppConfig.
-func expectedAppSlug(org, role string) string {
+// Used during uninstall to infer app names when config.yaml is unavailable.
+func ExpectedAppSlug(org, role string) string {
 	if role == "fullsend" {
 		return "fullsend-" + org
 	}

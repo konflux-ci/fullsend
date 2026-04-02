@@ -76,7 +76,7 @@ func TestExpectedAppSlug(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := expectedAppSlug(tc.org, tc.role)
+			got := ExpectedAppSlug(tc.org, tc.role)
 			assert.Equal(t, tc.expected, got)
 		})
 	}
