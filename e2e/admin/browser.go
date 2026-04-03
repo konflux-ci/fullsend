@@ -29,10 +29,22 @@ func NewPlaywrightBrowserOpener(page playwright.Page) *PlaywrightBrowserOpener {
 //  1. With the local form URL — auto-submits to GitHub, we click "Create"
 //  2. With the installation URL — we click "Install"
 func (b *PlaywrightBrowserOpener) Open(_ context.Context, url string) error {
+	// For the local manifest form, use domcontentloaded instead of networkidle.
+	// The form auto-submits via JS on load, so networkidle would wait through
+	// the redirect and we'd miss the intermediate state.
+	waitUntil := playwright.WaitUntilStateNetworkidle
+	if strings.Contains(url, "127.0.0.1") {
+		waitUntil = playwright.WaitUntilStateDomcontentloaded
+	}
+
 	if _, err := b.page.Goto(url, playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateNetworkidle,
+		WaitUntil: waitUntil,
 	}); err != nil {
-		return fmt.Errorf("navigating to %s: %w", url, err)
+		// Navigation errors are expected when the page auto-submits.
+		// Check the current URL to determine if we're in a valid state.
+		if !strings.Contains(url, "127.0.0.1") {
+			return fmt.Errorf("navigating to %s: %w", url, err)
+		}
 	}
 
 	pageURL := b.page.URL()
@@ -40,34 +52,38 @@ func (b *PlaywrightBrowserOpener) Open(_ context.Context, url string) error {
 	switch {
 	case strings.Contains(pageURL, "/settings/apps/new"):
 		// GitHub "Register new GitHub App" confirmation page.
-		// The local form auto-submitted the manifest; we're now on GitHub.
+		// Either we navigated here directly or the auto-submit redirected us.
 		return b.handleCreateAppPage()
 
 	case strings.Contains(pageURL, "/installations/new"):
 		// GitHub App installation page.
 		return b.handleInstallAppPage()
 
-	case strings.Contains(url, "127.0.0.1"):
-		// Local manifest form — it auto-submits via JS.
-		// Wait for the redirect to GitHub, then handle the create page.
+	case strings.Contains(pageURL, "/callback") || strings.Contains(pageURL, "127.0.0.1"):
+		if strings.Contains(pageURL, "/callback") {
+			// Already at the callback — the auto-submit went all the way through.
+			return nil
+		}
+
+		// Still on the local form page — wait for the auto-submit to redirect.
+		// First try waiting for the GitHub app creation page.
 		if err := b.page.WaitForURL("**/settings/apps/new**", playwright.PageWaitForURLOptions{
 			Timeout: playwright.Float(30000),
 		}); err != nil {
-			// The auto-submit may have already redirected. Check current URL.
+			// Check if we ended up somewhere useful despite the timeout.
 			pageURL = b.page.URL()
 			if strings.Contains(pageURL, "/settings/apps/new") {
 				return b.handleCreateAppPage()
 			}
-			// May have gone all the way through to callback.
 			if strings.Contains(pageURL, "/callback") {
-				return nil // Success — callback already handled.
+				return nil
 			}
 			return fmt.Errorf("waiting for GitHub app creation page: %w", err)
 		}
 		return b.handleCreateAppPage()
 
 	default:
-		return fmt.Errorf("unexpected URL: %s", pageURL)
+		return fmt.Errorf("unexpected URL after navigating to %s: %s", url, pageURL)
 	}
 }
 
@@ -126,6 +142,11 @@ func deleteAppViaPlaywright(page playwright.Page, slug string) error {
 		WaitUntil: playwright.WaitUntilStateNetworkidle,
 	}); err != nil {
 		return fmt.Errorf("navigating to app settings for %s: %w", slug, err)
+	}
+
+	// Handle sudo mode if GitHub requires password re-entry.
+	if err := handleSudoMode(page); err != nil {
+		return fmt.Errorf("handling sudo mode for app deletion: %w", err)
 	}
 
 	// Click "Delete GitHub App" in the danger zone.

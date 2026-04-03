@@ -27,6 +27,12 @@ func createPAT(page playwright.Page, note string) (string, error) {
 		return "", fmt.Errorf("navigating to token creation page: %w", err)
 	}
 
+	// GitHub may show a "sudo" password confirmation page before the
+	// token creation form. Handle it if present.
+	if err := handleSudoMode(page); err != nil {
+		return "", fmt.Errorf("handling sudo mode: %w", err)
+	}
+
 	// Verify we're on the right page.
 	if err := page.Locator("#oauth_access_description").WaitFor(playwright.LocatorWaitForOptions{
 		Timeout: playwright.Float(10000),
@@ -99,6 +105,11 @@ func deletePAT(page playwright.Page, note string) error {
 		WaitUntil: playwright.WaitUntilStateNetworkidle,
 	}); err != nil {
 		return fmt.Errorf("navigating to tokens page: %w", err)
+	}
+
+	// Handle sudo mode if GitHub requires password re-entry.
+	if err := handleSudoMode(page); err != nil {
+		return fmt.Errorf("handling sudo mode on tokens page: %w", err)
 	}
 
 	// Find the row containing our token note and click its delete button.
