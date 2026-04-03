@@ -146,6 +146,8 @@ func TestAdminInstallUninstall(t *testing.T) {
 	// =========================================
 	t.Log("=== Phase 3: First Uninstall ===")
 	runUninstall(t, env)
+	// Wait for repo deletion to propagate (GitHub returns 409 if checked too soon).
+	time.Sleep(5 * time.Second)
 	verifyNotInstalled(t, env)
 
 	// =========================================
@@ -153,6 +155,7 @@ func TestAdminInstallUninstall(t *testing.T) {
 	// =========================================
 	t.Log("=== Phase 4: Second Uninstall (idempotent) ===")
 	runUninstallAllowNotFound(t, env)
+	time.Sleep(3 * time.Second)
 	verifyNotInstalled(t, env)
 
 	t.Log("=== E2E test complete ===")

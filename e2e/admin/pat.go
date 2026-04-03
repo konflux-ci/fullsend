@@ -133,8 +133,8 @@ func createDispatchPAT(page playwright.Page, org, screenshotDir string, logf fun
 	saveDebugScreenshot(page, screenshotDir, "dispatch-pat-form-loaded", logf)
 
 	// Fill in the token name using Playwright's label-based locator.
-	// Use a timestamp to avoid name collisions with tokens from previous runs.
-	tokenName := fmt.Sprintf("fullsend-dispatch-%s-e2e-%d", org, time.Now().Unix())
+	// Use a short timestamp to avoid name collisions (max 40 chars).
+	tokenName := fmt.Sprintf("fs-dispatch-%s-%d", org, time.Now().Unix())
 	nameInput := page.GetByLabel("Token name")
 	if err := nameInput.Fill(tokenName); err != nil {
 		saveDebugScreenshot(page, screenshotDir, "dispatch-pat-name-fill-failed", logf)
@@ -453,7 +453,7 @@ func createDispatchPAT(page playwright.Page, org, screenshotDir string, logf fun
 // fine-grained tokens page and clicking delete for the matching token.
 func deleteDispatchPAT(page playwright.Page, org, screenshotDir string, logf func(string, ...any)) error {
 	// Match any token with the dispatch prefix (name includes timestamp).
-	tokenPrefix := fmt.Sprintf("fullsend-dispatch-%s-e2e", org)
+	tokenPrefix := fmt.Sprintf("fs-dispatch-%s-", org)
 
 	if _, err := page.Goto("https://github.com/settings/personal-access-tokens", playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
