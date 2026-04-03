@@ -29,7 +29,6 @@ type e2eEnv struct {
 	page          playwright.Page
 	client        *gh.LiveClient
 	token         string
-	dispatchToken string
 	printer       *ui.Printer
 	runID         string
 	screenshotDir string
@@ -90,12 +89,6 @@ func setupE2ETest(t *testing.T) *e2eEnv {
 	client := newLiveClient(token)
 	printer := ui.New(os.Stdout)
 
-	// Dispatch token — read from env var (required for non-interactive e2e).
-	dispatchToken := os.Getenv("E2E_DISPATCH_TOKEN")
-	if dispatchToken == "" {
-		t.Skip("E2E_DISPATCH_TOKEN not set, skipping e2e test (needed for dispatch token layer)")
-	}
-
 	// Acquire lock.
 	runID := uuid.New().String()
 	t.Logf("E2E run ID: %s", runID)
@@ -114,7 +107,6 @@ func setupE2ETest(t *testing.T) *e2eEnv {
 		page:          page,
 		client:        client,
 		token:         token,
-		dispatchToken: dispatchToken,
 		printer:       printer,
 		runID:         runID,
 		screenshotDir: screenshotDir,
@@ -224,9 +216,34 @@ func runFullInstall(t *testing.T, env *e2eEnv) ([]layers.AgentCredentials, *conf
 		enrolledRepoIDs = append(enrolledRepoIDs, repo.ID)
 	}
 
-	// Build layer stack and install.
-	stack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, env.dispatchToken, enrolledRepoIDs)
+	// Install config-repo and workflows layers first so .fullsend repo exists.
+	// This mirrors the real CLI which creates the repo before prompting for
+	// the dispatch token (so the user can scope the fine-grained PAT to it).
+	configLayer := layers.NewConfigRepoLayer(testOrg, env.client, orgCfg, env.printer, hasPrivate)
+	err = configLayer.Install(ctx)
+	require.NoError(t, err, "pre-installing config-repo layer")
 	registerRepoCleanup(t, env.client, testOrg, forge.ConfigRepoName)
+
+	workflowsLayer := layers.NewWorkflowsLayer(testOrg, env.client, env.printer, user)
+	err = workflowsLayer.Install(ctx)
+	require.NoError(t, err, "pre-installing workflows layer")
+
+	// Create a fine-grained PAT for dispatch via Playwright.
+	// This mirrors the real CLI flow: the user creates a fine-grained PAT
+	// scoped to .fullsend with actions:write, then pastes it back.
+	t.Log("Creating fine-grained dispatch PAT via Playwright...")
+	dispatchToken, err := createDispatchPAT(env.page, testOrg, env.screenshotDir, t.Logf)
+	require.NoError(t, err, "creating dispatch PAT")
+	t.Cleanup(func() {
+		t.Log("Deleting dispatch PAT...")
+		if delErr := deleteDispatchPAT(env.page, testOrg, env.screenshotDir, t.Logf); delErr != nil {
+			t.Logf("warning: could not delete dispatch PAT: %v", delErr)
+		}
+	})
+
+	// Build full layer stack with the dispatch token and install all layers.
+	// Config-repo and workflows are idempotent, so re-running them is harmless.
+	stack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs)
 
 	err = stack.InstallAll(ctx)
 	require.NoError(t, err, "installing layers")
