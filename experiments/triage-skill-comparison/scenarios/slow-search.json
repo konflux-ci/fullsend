@@ -1,0 +1,35 @@
+{
+  "scenario_id": "slow-search",
+  "quality": "medium",
+  "title": "Search is extremely slow since last update",
+  "body": "Since the v2.4.0 update last week, search has become painfully slow. It used to return results almost instantly, but now it takes 10+ seconds every time I search. I use search heavily throughout the day and this is a major productivity killer.\n\nI've tried clearing my browser cache and restarting, no change. Other parts of the app seem fine, it's just search.\n\nThis is blocking my workflow — any timeline on a fix?",
+  "ground_truth": {
+    "actual_experience": "The reporter manages a large organization on TaskFlow with approximately 50,000 tasks across 12 projects. They primarily search by assignee name (typing a colleague's name to find tasks assigned to them). The slowness only manifests when the search scope is set to 'All Projects' — searching within a single project returns results in under a second, but the reporter always uses 'All Projects' scope and hasn't tried narrowing it. The v2.4.0 update introduced a new full-text search engine migration that dropped several database indexes during the migration and failed to recreate them due to a silent error in the migration script.",
+    "environment": {
+      "app": "TaskFlow",
+      "app_version": "2.4.0",
+      "platform": "web",
+      "browser": "Firefox 123",
+      "os": "Ubuntu 22.04",
+      "deployment": "self-hosted",
+      "database": "PostgreSQL 15.2"
+    },
+    "missing_details": {
+      "dataset_size": "~50,000 tasks across 12 projects",
+      "query_pattern": "Searching by assignee name (partial match, e.g., typing 'Sarah' to find tasks assigned to Sarah Chen)",
+      "scope_dependency": "Slowness only occurs with 'All Projects' search scope; single-project scoped searches return in under 1 second",
+      "root_cause": "The v2.4.0 migration script dropped indexes on the tasks table (including the assignee_name index and a composite index on project_id + assignee_id) and silently failed to recreate them. The migration log shows 'CREATE INDEX' statements but they errored due to a locking conflict during the hot migration.",
+      "database_state": "PostgreSQL is missing indexes on tasks.assignee_name, tasks.assignee_id, and the composite index on (project_id, assignee_id, status). A sequential scan on 50k rows is occurring instead of an index scan."
+    },
+    "reproduction_steps": [
+      "Log in to TaskFlow with an account that has access to multiple projects",
+      "Ensure the instance has a substantial number of tasks (10,000+)",
+      "Set search scope to 'All Projects' using the dropdown in the search bar",
+      "Type an assignee name in the search box",
+      "Observe: results take 10-15 seconds to return",
+      "Compare: switch scope to a single project and repeat the same search — results return in under 1 second"
+    ],
+    "frequency": "100% reproducible on instances with large task counts when using All Projects scope. Small instances (under 1,000 tasks) are not noticeably affected.",
+    "workaround": "Search within individual projects instead of using the 'All Projects' scope. Alternatively, manually recreate the missing database indexes."
+  }
+}

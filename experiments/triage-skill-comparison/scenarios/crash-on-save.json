@@ -1,0 +1,29 @@
+{
+  "scenario_id": "crash-on-save",
+  "quality": "very-poor",
+  "title": "app crashes when I save",
+  "body": "The app keeps crashing whenever I try to save. This is really frustrating, I've lost work multiple times now. Please fix ASAP.",
+  "ground_truth": {
+    "actual_experience": "When saving a task whose title exceeds 255 characters, the TaskFlow web app crashes with an unhandled exception. The UI freezes momentarily, then the entire page goes blank white. The task data being edited is lost and must be re-entered. The reporter discovered through trial and error that shorter titles save fine, but did not mention this in the report.",
+    "environment": {
+      "app": "TaskFlow",
+      "app_version": "2.3.1",
+      "platform": "web",
+      "browser": "Chrome 122",
+      "os": "macOS Sonoma 14.3",
+      "screen_resolution": "2560x1440"
+    },
+    "reproduction_steps": [
+      "Open TaskFlow web app and log in",
+      "Navigate to any project board",
+      "Click 'New Task' to create a task",
+      "Enter a title that is longer than 255 characters (e.g., paste a long paragraph into the title field)",
+      "Fill in any other fields as desired",
+      "Click the 'Save' button",
+      "Observe: the page freezes briefly, then goes blank white"
+    ],
+    "error_details": "TypeError: Cannot read properties of undefined (reading 'slice') — visible in the browser developer console at the moment of the crash. The stack trace points to a truncation utility function that assumes the input string is non-null after a validation step that silently returns undefined for strings exceeding 255 characters.",
+    "frequency": "100% reproducible when title exceeds 255 characters. Saving with titles of 255 characters or fewer works normally.",
+    "workaround": "Keep task titles under 255 characters. The reporter has been shortening titles to avoid the crash but finds this inconvenient and did not mention it in the report."
+  }
+}

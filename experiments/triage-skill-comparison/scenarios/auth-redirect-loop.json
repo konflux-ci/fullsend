@@ -1,0 +1,42 @@
+{
+  "scenario_id": "auth-redirect-loop",
+  "quality": "good-but-ambiguous",
+  "title": "OAuth login enters infinite redirect loop",
+  "body": "When attempting to log in via Google OAuth on our TaskFlow instance, the browser enters an infinite redirect loop between our app and the Google OAuth consent screen.\n\nSteps to reproduce:\n1. Go to https://taskflow.internal.acmecorp.com/login\n2. Click 'Sign in with Google'\n3. Google consent screen appears, I approve access\n4. Browser redirects back to TaskFlow, but then immediately redirects to Google again\n5. This loops indefinitely until the browser shows 'too many redirects' error\n\nBrowser: Chrome 122 on Windows 11\nTaskFlow version: 2.4.0 (self-hosted)\n\nI've tried:\n- Different Google accounts (same result)\n- Clearing all cookies and site data for both domains\n- Incognito mode (same result)\n- Different browser (Firefox — same result)\n\nOther users in my office have the same issue. Users working remotely from home do NOT have this issue, which is strange.\n\nThe redirect URL in the address bar during the loop looks correct to me:\nhttps://taskflow.internal.acmecorp.com/auth/google/callback?code=4/0A...\n\nOur Google Cloud Console OAuth config has the correct redirect URI listed.\n\nServer logs show the callback endpoint is being hit, receiving the auth code, but then issuing a 302 back to /login instead of completing the session.\n\nThis started after our IT department made some network changes last week, but they say nothing should affect web app traffic.",
+  "ground_truth": {
+    "actual_experience": "The reporter is behind a corporate proxy (Zscaler) that performs SSL inspection and URL rewriting on outbound traffic. The proxy rewrites the 'state' parameter in the OAuth callback URL by re-encoding special characters, which causes TaskFlow's CSRF validation to fail (the state token no longer matches what was stored in the session). When CSRF validation fails, the auth middleware silently redirects back to /login, which initiates a new OAuth flow, creating the loop. The reporter does not realize the proxy is modifying the traffic because the proxy is transparent to them.",
+    "environment": {
+      "app": "TaskFlow",
+      "app_version": "2.4.0",
+      "platform": "web",
+      "browser": "Chrome 122",
+      "os": "Windows 11 Enterprise",
+      "deployment": "self-hosted",
+      "network": "Corporate network with Zscaler transparent proxy performing SSL inspection",
+      "oauth_provider": "Google",
+      "internal_domain": "taskflow.internal.acmecorp.com"
+    },
+    "red_herrings": {
+      "cookies": "Cookies are not the issue — the reporter already tested in incognito mode and cleared all cookies",
+      "cors": "CORS is not the issue — the redirects are full-page navigation, not XHR/fetch requests, so CORS does not apply",
+      "session_storage": "Session storage is functioning correctly — the server is writing and reading session data fine, the problem is the state parameter mismatch",
+      "oauth_callback_url": "The OAuth callback URL configuration is correct in both Google Cloud Console and TaskFlow config"
+    },
+    "actual_root_cause": {
+      "summary": "Corporate Zscaler proxy re-encodes the OAuth state parameter during SSL inspection, breaking CSRF validation",
+      "mechanism": "The OAuth 'state' parameter contains a base64-encoded CSRF token. The Zscaler proxy's URL normalization re-encodes certain characters ('+' becomes '%2B', '/' becomes '%2F') in the query string during its inspection pass. When TaskFlow's auth callback handler compares the received state parameter against the stored session token, they no longer match. The CSRF validation fails, and the auth middleware issues a 302 redirect to /login.",
+      "evidence_available": "Comparing the state parameter value in the initial OAuth request vs. the callback URL would reveal the character encoding difference. The server logs show 'CSRF state mismatch' at DEBUG level, but the default log level is INFO so this message is not visible in normal operation.",
+      "key_clue_in_report": "The reporter mentions 'users working remotely from home do NOT have this issue' and 'IT department made some network changes last week' — both point to a network-level cause. Remote users bypass the corporate proxy via split-tunnel VPN."
+    },
+    "reproduction_steps": [
+      "Access TaskFlow through a network with a transparent SSL-inspecting proxy that normalizes URL query parameters",
+      "Initiate Google OAuth login flow",
+      "Complete the Google consent screen",
+      "Observe: the callback URL's state parameter has been re-encoded by the proxy",
+      "Observe: TaskFlow's CSRF validation fails due to state parameter mismatch",
+      "Observe: auth middleware redirects to /login, restarting the OAuth flow"
+    ],
+    "frequency": "100% reproducible for any user behind the corporate proxy. 0% for users accessing directly or via VPN.",
+    "workaround": "Connect via VPN (which bypasses the proxy), or have IT add taskflow.internal.acmecorp.com and accounts.google.com to the proxy's SSL inspection bypass list."
+  }
+}
