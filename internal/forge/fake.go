@@ -25,6 +25,17 @@ type VariableRecord struct {
 	Owner, Repo, Name, Value string
 }
 
+// NewFakeClient returns a FakeClient with all maps initialized.
+func NewFakeClient() *FakeClient {
+	return &FakeClient{
+		FileContents:   make(map[string][]byte),
+		WorkflowRuns:   make(map[string]*WorkflowRun),
+		Secrets:        make(map[string]bool),
+		VariablesExist: make(map[string]bool),
+		Errors:         make(map[string]error),
+	}
+}
+
 // FakeClient is a thread-safe test double for forge.Client.
 // Pre-populate its fields to control return values, and inspect
 // recorder slices after the test to verify which calls were made.
@@ -131,6 +142,34 @@ func (f *FakeClient) DeleteRepo(_ context.Context, owner, repo string) error {
 	}
 
 	f.DeletedRepos = append(f.DeletedRepos, owner+"/"+repo)
+
+	// Remove from Repos.
+	fullName := owner + "/" + repo
+	filtered := f.Repos[:0]
+	for _, r := range f.Repos {
+		if r.FullName != fullName && r.Name != repo {
+			filtered = append(filtered, r)
+		}
+	}
+	f.Repos = filtered
+
+	// Remove from CreatedRepos.
+	filteredCreated := f.CreatedRepos[:0]
+	for _, r := range f.CreatedRepos {
+		if r.FullName != fullName && r.Name != repo {
+			filteredCreated = append(filteredCreated, r)
+		}
+	}
+	f.CreatedRepos = filteredCreated
+
+	// Remove associated file contents.
+	prefix := fullName + "/"
+	for k := range f.FileContents {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(f.FileContents, k)
+		}
+	}
+
 	return nil
 }
 
@@ -149,6 +188,11 @@ func (f *FakeClient) CreateFile(_ context.Context, owner, repo, path, message st
 		Message: message,
 		Content: content,
 	})
+
+	if f.FileContents == nil {
+		f.FileContents = make(map[string][]byte)
+	}
+	f.FileContents[owner+"/"+repo+"/"+path] = content
 	return nil
 }
 
