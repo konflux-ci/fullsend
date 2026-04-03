@@ -67,7 +67,7 @@ func TestWorkflowsLayer_Install_AgentWorkflowContent(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, agentContent, "agent.yaml should have been written")
-	assert.Contains(t, agentContent, "workflow_call")
+	assert.Contains(t, agentContent, "workflow_dispatch")
 }
 
 func TestWorkflowsLayer_Install_OnboardWorkflowContent(t *testing.T) {
@@ -256,4 +256,25 @@ func (c *codeownersErrorClient) GetRepo(context.Context, string, string) (*forge
 }
 func (c *codeownersErrorClient) RepoVariableExists(context.Context, string, string, string) (bool, error) {
 	return false, nil
+}
+func (c *codeownersErrorClient) GetTokenScopes(context.Context) ([]string, error) {
+	return nil, nil
+}
+func (c *codeownersErrorClient) CreateOrgSecret(context.Context, string, string, string, []int64) error {
+	return nil
+}
+func (c *codeownersErrorClient) OrgSecretExists(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (c *codeownersErrorClient) DeleteOrgSecret(context.Context, string, string) error {
+	return nil
+}
+func (c *codeownersErrorClient) SetOrgSecretRepos(context.Context, string, string, []int64) error {
+	return nil
+}
+func (c *codeownersErrorClient) CreateOrUpdateFileOnBranch(context.Context, string, string, string, string, string, []byte) error {
+	return nil
+}
+func (c *codeownersErrorClient) DispatchWorkflow(context.Context, string, string, string, string, map[string]string) error {
+	return nil
 }

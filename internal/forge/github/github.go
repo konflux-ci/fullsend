@@ -247,6 +247,7 @@ func (c *LiveClient) ListOrgRepos(ctx context.Context, org string) ([]forge.Repo
 		}
 
 		var repos []struct {
+			ID            int64  `json:"id"`
 			Name          string `json:"name"`
 			FullName      string `json:"full_name"`
 			DefaultBranch string `json:"default_branch"`
@@ -263,6 +264,7 @@ func (c *LiveClient) ListOrgRepos(ctx context.Context, org string) ([]forge.Repo
 				continue
 			}
 			result = append(result, forge.Repository{
+				ID:            r.ID,
 				Name:          r.Name,
 				FullName:      r.FullName,
 				DefaultBranch: r.DefaultBranch,
@@ -281,6 +283,12 @@ func (c *LiveClient) ListOrgRepos(ctx context.Context, org string) ([]forge.Repo
 }
 
 // CreateRepo creates a new repository under an organization.
+//
+// The repo is created with auto_init: true so that a default branch exists
+// immediately. However, GitHub's auto_init is asynchronous — the API returns
+// 201 before the initial commit is fully materialized. Callers writing files
+// to the new repo via the Contents API should expect transient 404s and
+// retry with backoff. See the retry logic in LiveClient.do().
 func (c *LiveClient) CreateRepo(ctx context.Context, org, name, description string, private bool) (*forge.Repository, error) {
 	payload := map[string]any{
 		"name":        name,
@@ -324,6 +332,7 @@ func (c *LiveClient) GetRepo(ctx context.Context, owner, repo string) (*forge.Re
 	}
 
 	var r struct {
+		ID            int64  `json:"id"`
 		Name          string `json:"name"`
 		FullName      string `json:"full_name"`
 		DefaultBranch string `json:"default_branch"`
@@ -336,6 +345,7 @@ func (c *LiveClient) GetRepo(ctx context.Context, owner, repo string) (*forge.Re
 	}
 
 	return &forge.Repository{
+		ID:            r.ID,
 		Name:          r.Name,
 		FullName:      r.FullName,
 		DefaultBranch: r.DefaultBranch,
@@ -356,6 +366,15 @@ func (c *LiveClient) CreateFile(ctx context.Context, owner, repo, path, message 
 }
 
 // CreateFileOnBranch creates a file on a specific branch (or default if empty).
+//
+// Retries on 404 to handle GitHub's async repo initialization: after
+// CreateRepo with auto_init, the default branch may not be materialized
+// yet and the Contents API returns 404. Also retries on 409 (conflict)
+// which can occur when the branch ref is being updated by a concurrent write.
+//
+// GitHub quirk: writing to .github/workflows/ paths returns 404 (not 403)
+// when the token lacks the "workflow" scope. If you hit persistent 404s
+// on workflow file creation, the fix is: gh auth refresh -s workflow
 func (c *LiveClient) CreateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error {
 	payload := map[string]any{
 		"message": message,
@@ -365,52 +384,130 @@ func (c *LiveClient) CreateFileOnBranch(ctx context.Context, owner, repo, branch
 		payload["branch"] = branch
 	}
 
-	resp, err := c.put(ctx, fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path), payload)
-	if err != nil {
-		return fmt.Errorf("create file %s: %w", path, err)
-	}
-	resp.Body.Close()
-	return nil
+	apiPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path)
+	return c.putFileWithRetry(ctx, apiPath, payload, path)
 }
 
 // CreateOrUpdateFile creates a file or updates it if it already exists.
+// Retries on 404/409 to handle async repo initialization and branch ref races.
 func (c *LiveClient) CreateOrUpdateFile(ctx context.Context, owner, repo, path, message string, content []byte) error {
-	// Try to get existing file for its SHA.
 	apiPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path)
-	existingResp, err := c.do(ctx, http.MethodGet, apiPath, nil)
-	if err != nil {
-		return fmt.Errorf("check existing file: %w", err)
-	}
 
-	payload := map[string]any{
-		"message": message,
-		"content": base64.StdEncoding.EncodeToString(content),
-	}
-
-	switch existingResp.StatusCode {
-	case http.StatusOK:
-		var existing struct {
-			SHA string `json:"sha"`
+	return c.retryOnTransient(ctx, path, func() error {
+		// Try to get existing file for its SHA.
+		existingResp, err := c.do(ctx, http.MethodGet, apiPath, nil)
+		if err != nil {
+			return fmt.Errorf("check existing file: %w", err)
 		}
-		if err := decodeJSON(existingResp, &existing); err != nil {
-			return fmt.Errorf("decode existing file: %w", err)
-		}
-		payload["sha"] = existing.SHA
-	case http.StatusNotFound:
-		// File doesn't exist yet — create without SHA.
-		existingResp.Body.Close()
-	default:
-		// Unexpected status — surface as an error.
-		defer existingResp.Body.Close()
-		return checkStatus(existingResp, http.StatusOK, http.StatusNotFound)
-	}
 
-	resp, err := c.put(ctx, apiPath, payload)
-	if err != nil {
-		return fmt.Errorf("create or update file %s: %w", path, err)
+		payload := map[string]any{
+			"message": message,
+			"content": base64.StdEncoding.EncodeToString(content),
+		}
+
+		if existingResp.StatusCode == http.StatusOK {
+			var existing struct {
+				SHA string `json:"sha"`
+			}
+			if err := decodeJSON(existingResp, &existing); err != nil {
+				return fmt.Errorf("decode existing file: %w", err)
+			}
+			payload["sha"] = existing.SHA
+		} else {
+			existingResp.Body.Close()
+		}
+
+		resp, err := c.put(ctx, apiPath, payload)
+		if err != nil {
+			return fmt.Errorf("create or update file %s: %w", path, err)
+		}
+		resp.Body.Close()
+		return nil
+	})
+}
+
+// CreateOrUpdateFileOnBranch creates or updates a file on a specific branch.
+// Like CreateOrUpdateFile, it fetches the existing SHA before updating.
+// Retries on 404/409 for async repo init and branch ref races.
+func (c *LiveClient) CreateOrUpdateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error {
+	apiPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path)
+
+	return c.retryOnTransient(ctx, path, func() error {
+		// Try to get existing file on the branch for its SHA.
+		existingResp, err := c.do(ctx, http.MethodGet, apiPath+"?ref="+branch, nil)
+		if err != nil {
+			return fmt.Errorf("check existing file on branch: %w", err)
+		}
+
+		payload := map[string]any{
+			"message": message,
+			"content": base64.StdEncoding.EncodeToString(content),
+			"branch":  branch,
+		}
+
+		if existingResp.StatusCode == http.StatusOK {
+			var existing struct {
+				SHA string `json:"sha"`
+			}
+			if err := decodeJSON(existingResp, &existing); err != nil {
+				return fmt.Errorf("decode existing file: %w", err)
+			}
+			payload["sha"] = existing.SHA
+		} else {
+			existingResp.Body.Close()
+		}
+
+		resp, err := c.put(ctx, apiPath, payload)
+		if err != nil {
+			return fmt.Errorf("create or update file %s on branch %s: %w", path, branch, err)
+		}
+		resp.Body.Close()
+		return nil
+	})
+}
+
+// putFileWithRetry wraps a single PUT to the Contents API with retry on
+// transient errors (404 from async repo init, 409 from branch ref races).
+func (c *LiveClient) putFileWithRetry(ctx context.Context, apiPath string, payload map[string]any, path string) error {
+	return c.retryOnTransient(ctx, path, func() error {
+		resp, err := c.put(ctx, apiPath, payload)
+		if err != nil {
+			return fmt.Errorf("create file %s: %w", path, err)
+		}
+		resp.Body.Close()
+		return nil
+	})
+}
+
+// retryOnTransient retries an operation that may fail with 404 or 409 due to
+// GitHub's async repo initialization or branch ref update races. It uses
+// linear backoff (2s between attempts) and up to 5 attempts (~10s total).
+func (c *LiveClient) retryOnTransient(ctx context.Context, label string, fn func() error) error {
+	const attempts = 5
+	const delay = 2 * time.Second
+
+	var lastErr error
+	for i := range attempts {
+		lastErr = fn()
+		if lastErr == nil {
+			return nil
+		}
+
+		// Only retry on 404 (repo not ready) or 409 (branch ref conflict).
+		var apiErr *APIError
+		if !errors.As(lastErr, &apiErr) || (apiErr.StatusCode != 404 && apiErr.StatusCode != 409) {
+			return lastErr
+		}
+
+		if i < attempts-1 {
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
-	resp.Body.Close()
-	return nil
+	return fmt.Errorf("%s: %w (after %d attempts)", label, lastErr, attempts)
 }
 
 // GetFileContent retrieves the content of a file from a repository.
@@ -427,10 +524,7 @@ func (c *LiveClient) GetFileContent(ctx context.Context, owner, repo, path strin
 		return nil, fmt.Errorf("decode file content: %w", err)
 	}
 
-	// GitHub's Contents API returns base64 content with newlines for line
-	// wrapping. Strip them before decoding.
-	cleaned := strings.ReplaceAll(file.Content, "\n", "")
-	data, err := base64.StdEncoding.DecodeString(cleaned)
+	data, err := base64.StdEncoding.DecodeString(file.Content)
 	if err != nil {
 		return nil, fmt.Errorf("decode base64 content: %w", err)
 	}
@@ -559,8 +653,36 @@ func (c *LiveClient) GetAuthenticatedUser(ctx context.Context) (string, error) {
 	return user.Login, nil
 }
 
+// GetTokenScopes returns the OAuth scopes granted to the current token
+// by inspecting the X-OAuth-Scopes header from a lightweight API call.
+func (c *LiveClient) GetTokenScopes(ctx context.Context) ([]string, error) {
+	resp, err := c.do(ctx, http.MethodHead, "/user", nil)
+	if err != nil {
+		return nil, fmt.Errorf("checking token scopes: %w", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	header := resp.Header.Get("X-OAuth-Scopes")
+	if header == "" {
+		// Fine-grained tokens and GitHub App tokens don't have this header.
+		// Return nil to indicate scope introspection isn't available.
+		return nil, nil
+	}
+
+	var scopes []string
+	for _, s := range strings.Split(header, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			scopes = append(scopes, s)
+		}
+	}
+	return scopes, nil
+}
+
 // CreateRepoSecret creates or updates an encrypted repository secret.
 func (c *LiveClient) CreateRepoSecret(ctx context.Context, owner, repo, name, value string) error {
+	value = strings.TrimSpace(value)
 	// Step 1: Get the repo's public key for secret encryption.
 	keyResp, err := c.get(ctx, fmt.Sprintf("/repos/%s/%s/actions/secrets/public-key", owner, repo))
 	if err != nil {
@@ -731,6 +853,24 @@ func (c *LiveClient) GetWorkflowRun(ctx context.Context, owner, repo string, run
 	}, nil
 }
 
+// DispatchWorkflow triggers a workflow_dispatch event on a workflow file.
+// GitHub returns 204 No Content on success (not 200 or 201).
+func (c *LiveClient) DispatchWorkflow(ctx context.Context, owner, repo, workflowFile, ref string, inputs map[string]string) error {
+	payload := map[string]any{
+		"ref":    ref,
+		"inputs": inputs,
+	}
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflowFile), payload)
+	if err != nil {
+		return fmt.Errorf("dispatch workflow %s: %w", workflowFile, err)
+	}
+	if err := checkStatus(resp, http.StatusNoContent); err != nil {
+		return fmt.Errorf("dispatch workflow %s: %w", workflowFile, err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
 // ListOrgInstallations lists app installations for an organization.
 func (c *LiveClient) ListOrgInstallations(ctx context.Context, org string) ([]forge.Installation, error) {
 	resp, err := c.get(ctx, fmt.Sprintf("/orgs/%s/installations?per_page=100", org))
@@ -758,6 +898,108 @@ func (c *LiveClient) ListOrgInstallations(ctx context.Context, org string) ([]fo
 		}
 	}
 	return installs, nil
+}
+
+// CreateOrgSecret creates or updates an encrypted organization-level secret
+// scoped to the given repository IDs.
+// The value is trimmed of whitespace before encryption to prevent corruption
+// from stray newlines or carriage returns in pasted input.
+func (c *LiveClient) CreateOrgSecret(ctx context.Context, org, name, value string, selectedRepoIDs []int64) error {
+	value = strings.TrimSpace(value)
+	// Step 1: Get the org's public key for secret encryption.
+	keyResp, err := c.get(ctx, fmt.Sprintf("/orgs/%s/actions/secrets/public-key", org))
+	if err != nil {
+		return fmt.Errorf("get org public key: %w", err)
+	}
+
+	var pubKey struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	if err := decodeJSON(keyResp, &pubKey); err != nil {
+		return fmt.Errorf("decode org public key: %w", err)
+	}
+
+	// Step 2: Decode the public key and encrypt the secret value.
+	keyBytes, err := base64.StdEncoding.DecodeString(pubKey.Key)
+	if err != nil {
+		return fmt.Errorf("decode org public key base64: %w", err)
+	}
+
+	var recipientKey [32]byte
+	copy(recipientKey[:], keyBytes)
+
+	encrypted, err := box.SealAnonymous(nil, []byte(value), &recipientKey, nil)
+	if err != nil {
+		return fmt.Errorf("encrypt org secret: %w", err)
+	}
+
+	// Step 3: Upload the encrypted secret with selected repo visibility.
+	payload := map[string]any{
+		"encrypted_value":         base64.StdEncoding.EncodeToString(encrypted),
+		"key_id":                  pubKey.KeyID,
+		"visibility":              "selected",
+		"selected_repository_ids": selectedRepoIDs,
+	}
+
+	resp, err := c.put(ctx, fmt.Sprintf("/orgs/%s/actions/secrets/%s", org, name), payload)
+	if err != nil {
+		return fmt.Errorf("create org secret %s: %w", name, err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// OrgSecretExists checks if an org-level secret exists.
+func (c *LiveClient) OrgSecretExists(ctx context.Context, org, name string) (bool, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/orgs/%s/actions/secrets/%s", org, name), nil)
+	if err != nil {
+		return false, fmt.Errorf("check org secret %s: %w", name, err)
+	}
+	resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	case http.StatusForbidden:
+		// 403 means the token doesn't have permission to check org secrets.
+		// Return false with an error so callers can distinguish "not found"
+		// from "can't tell due to permissions".
+		return false, &APIError{StatusCode: http.StatusForbidden, Message: "insufficient permissions to check org secret (missing admin:org scope?)"}
+	default:
+		return false, &APIError{StatusCode: resp.StatusCode, Message: "unexpected status checking org secret"}
+	}
+}
+
+// DeleteOrgSecret deletes an org-level secret. It is idempotent: a 404
+// (secret already gone) is not treated as an error.
+func (c *LiveClient) DeleteOrgSecret(ctx context.Context, org, name string) error {
+	resp, err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/orgs/%s/actions/secrets/%s", org, name), nil)
+	if err != nil {
+		return fmt.Errorf("delete org secret %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return &APIError{StatusCode: resp.StatusCode, Message: "unexpected status deleting org secret"}
+}
+
+// SetOrgSecretRepos sets the list of repositories that can access an org secret.
+func (c *LiveClient) SetOrgSecretRepos(ctx context.Context, org, name string, repoIDs []int64) error {
+	payload := map[string]any{
+		"selected_repository_ids": repoIDs,
+	}
+
+	resp, err := c.put(ctx, fmt.Sprintf("/orgs/%s/actions/secrets/%s/repositories", org, name), payload)
+	if err != nil {
+		return fmt.Errorf("set org secret repos for %s: %w", name, err)
+	}
+	resp.Body.Close()
+	return nil
 }
 
 // isNotFound checks whether an error is a 404 API error.

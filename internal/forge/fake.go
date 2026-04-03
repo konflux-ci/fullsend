@@ -9,6 +9,17 @@ import (
 // Compile-time check that FakeClient implements Client.
 var _ Client = (*FakeClient)(nil)
 
+// NewFakeClient returns a FakeClient with all maps initialised.
+func NewFakeClient() *FakeClient {
+	return &FakeClient{
+		FileContents:   make(map[string][]byte),
+		WorkflowRuns:   make(map[string]*WorkflowRun),
+		Secrets:        make(map[string]bool),
+		VariablesExist: make(map[string]bool),
+		Errors:         make(map[string]error),
+	}
+}
+
 // FileRecord records a file creation/update call.
 type FileRecord struct {
 	Owner, Repo, Path, Branch, Message string
@@ -18,6 +29,12 @@ type FileRecord struct {
 // SecretRecord records a secret creation call.
 type SecretRecord struct {
 	Owner, Repo, Name, Value string
+}
+
+// OrgSecretRecord records an org-level secret creation call.
+type OrgSecretRecord struct {
+	Org, Name, Value string
+	RepoIDs          []int64
 }
 
 // VariableRecord records a variable creation/update call.
@@ -37,20 +54,28 @@ type FakeClient struct {
 	WorkflowRuns      map[string]*WorkflowRun // key: "owner/repo/workflow"
 	AuthenticatedUser string
 	Installations     []Installation
-	Secrets           map[string]bool // key: "owner/repo/name"
-	VariablesExist    map[string]bool // key: "owner/repo/name"
+	Secrets           map[string]bool             // key: "owner/repo/name"
+	PullRequests      map[string][]ChangeProposal // key: "owner/repo"
+	TokenScopes       []string                    // scopes returned by GetTokenScopes
+	VariablesExist    map[string]bool             // key: "owner/repo/name"
+
+	// Org-level secret state
+	OrgSecrets       map[string]bool    // key: "org/name"
+	OrgSecretRepoIDs map[string][]int64 // key: "org/name" → repo IDs
 
 	// Error injection: key is method name, value is error to return.
 	Errors map[string]error
 
 	// Call recorders
-	CreatedRepos     []Repository
-	CreatedFiles     []FileRecord
-	CreatedBranches  []string // "owner/repo/branch"
-	CreatedProposals []ChangeProposal
-	DeletedRepos     []string // "owner/repo"
-	CreatedSecrets   []SecretRecord
-	Variables        []VariableRecord
+	CreatedRepos      []Repository
+	CreatedFiles      []FileRecord
+	CreatedBranches   []string // "owner/repo/branch"
+	CreatedProposals  []ChangeProposal
+	DeletedRepos      []string // "owner/repo"
+	CreatedSecrets    []SecretRecord
+	Variables         []VariableRecord
+	DeletedOrgSecrets []string // "org/name"
+	CreatedOrgSecrets []OrgSecretRecord
 
 	// internal counter for change proposal numbers
 	proposalCounter int
@@ -90,9 +115,23 @@ func (f *FakeClient) CreateRepo(_ context.Context, org, name, description string
 		return nil, e
 	}
 
+	fullName := org + "/" + name
+	// Check for duplicates in pre-populated repos.
+	for _, r := range f.Repos {
+		if r.FullName == fullName || r.Name == name {
+			return nil, fmt.Errorf("repository already exists: %s", fullName)
+		}
+	}
+	// Check for duplicates in previously created repos.
+	for _, r := range f.CreatedRepos {
+		if r.FullName == fullName || r.Name == name {
+			return nil, fmt.Errorf("repository already exists: %s", fullName)
+		}
+	}
+
 	r := Repository{
 		Name:          name,
-		FullName:      org + "/" + name,
+		FullName:      fullName,
 		DefaultBranch: "main",
 		Private:       private,
 	}
@@ -131,6 +170,34 @@ func (f *FakeClient) DeleteRepo(_ context.Context, owner, repo string) error {
 	}
 
 	f.DeletedRepos = append(f.DeletedRepos, owner+"/"+repo)
+
+	// Remove from Repos.
+	fullName := owner + "/" + repo
+	filtered := f.Repos[:0]
+	for _, r := range f.Repos {
+		if r.FullName != fullName && r.Name != repo {
+			filtered = append(filtered, r)
+		}
+	}
+	f.Repos = filtered
+
+	// Remove from CreatedRepos.
+	filteredCreated := f.CreatedRepos[:0]
+	for _, r := range f.CreatedRepos {
+		if r.FullName != fullName && r.Name != repo {
+			filteredCreated = append(filteredCreated, r)
+		}
+	}
+	f.CreatedRepos = filteredCreated
+
+	// Remove associated file contents.
+	prefix := fullName + "/"
+	for k := range f.FileContents {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(f.FileContents, k)
+		}
+	}
+
 	return nil
 }
 
@@ -149,6 +216,11 @@ func (f *FakeClient) CreateFile(_ context.Context, owner, repo, path, message st
 		Message: message,
 		Content: content,
 	})
+
+	if f.FileContents == nil {
+		f.FileContents = make(map[string][]byte)
+	}
+	f.FileContents[owner+"/"+repo+"/"+path] = content
 	return nil
 }
 
@@ -222,6 +294,30 @@ func (f *FakeClient) CreateFileOnBranch(_ context.Context, owner, repo, branch, 
 	return nil
 }
 
+func (f *FakeClient) CreateOrUpdateFileOnBranch(_ context.Context, owner, repo, branch, path, message string, content []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("CreateOrUpdateFileOnBranch"); e != nil {
+		return e
+	}
+
+	f.CreatedFiles = append(f.CreatedFiles, FileRecord{
+		Owner:   owner,
+		Repo:    repo,
+		Path:    path,
+		Branch:  branch,
+		Message: message,
+		Content: content,
+	})
+	// Also update FileContents so subsequent reads see the new content.
+	if f.FileContents == nil {
+		f.FileContents = make(map[string][]byte)
+	}
+	f.FileContents[owner+"/"+repo+"/"+path] = content
+	return nil
+}
+
 func (f *FakeClient) CreateChangeProposal(_ context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -240,7 +336,7 @@ func (f *FakeClient) CreateChangeProposal(_ context.Context, owner, repo, title,
 	return &cp, nil
 }
 
-func (f *FakeClient) ListRepoPullRequests(_ context.Context, _, _ string) ([]ChangeProposal, error) {
+func (f *FakeClient) ListRepoPullRequests(_ context.Context, owner, repo string) ([]ChangeProposal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -248,6 +344,11 @@ func (f *FakeClient) ListRepoPullRequests(_ context.Context, _, _ string) ([]Cha
 		return nil, e
 	}
 
+	if f.PullRequests != nil {
+		if prs, ok := f.PullRequests[owner+"/"+repo]; ok {
+			return prs, nil
+		}
+	}
 	return []ChangeProposal{}, nil
 }
 
@@ -260,6 +361,17 @@ func (f *FakeClient) GetAuthenticatedUser(_ context.Context) (string, error) {
 	}
 
 	return f.AuthenticatedUser, nil
+}
+
+func (f *FakeClient) GetTokenScopes(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("GetTokenScopes"); e != nil {
+		return nil, e
+	}
+
+	return f.TokenScopes, nil
 }
 
 func (f *FakeClient) CreateRepoSecret(_ context.Context, owner, repo, name, value string) error {
@@ -356,6 +468,17 @@ func (f *FakeClient) GetWorkflowRun(_ context.Context, owner, repo string, runID
 	return nil, fmt.Errorf("workflow run %d not found in %s/%s", runID, owner, repo)
 }
 
+func (f *FakeClient) DispatchWorkflow(_ context.Context, _, _, _, _ string, _ map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("DispatchWorkflow"); e != nil {
+		return e
+	}
+
+	return nil
+}
+
 func (f *FakeClient) ListOrgInstallations(_ context.Context, _ string) ([]Installation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -365,4 +488,67 @@ func (f *FakeClient) ListOrgInstallations(_ context.Context, _ string) ([]Instal
 	}
 
 	return f.Installations, nil
+}
+
+func (f *FakeClient) CreateOrgSecret(_ context.Context, org, name, value string, selectedRepoIDs []int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("CreateOrgSecret"); e != nil {
+		return e
+	}
+
+	f.CreatedOrgSecrets = append(f.CreatedOrgSecrets, OrgSecretRecord{
+		Org:     org,
+		Name:    name,
+		Value:   value,
+		RepoIDs: selectedRepoIDs,
+	})
+
+	if f.OrgSecrets == nil {
+		f.OrgSecrets = make(map[string]bool)
+	}
+	f.OrgSecrets[org+"/"+name] = true
+	return nil
+}
+
+func (f *FakeClient) OrgSecretExists(_ context.Context, org, name string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("OrgSecretExists"); e != nil {
+		return false, e
+	}
+
+	if f.OrgSecrets == nil {
+		return false, nil
+	}
+	return f.OrgSecrets[org+"/"+name], nil
+}
+
+func (f *FakeClient) DeleteOrgSecret(_ context.Context, org, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("DeleteOrgSecret"); e != nil {
+		return e
+	}
+
+	f.DeletedOrgSecrets = append(f.DeletedOrgSecrets, org+"/"+name)
+	return nil
+}
+
+func (f *FakeClient) SetOrgSecretRepos(_ context.Context, org, name string, repoIDs []int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if e := f.err("SetOrgSecretRepos"); e != nil {
+		return e
+	}
+
+	if f.OrgSecretRepoIDs == nil {
+		f.OrgSecretRepoIDs = make(map[string][]int64)
+	}
+	f.OrgSecretRepoIDs[org+"/"+name] = repoIDs
+	return nil
 }

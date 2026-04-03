@@ -3,7 +3,6 @@ package layers
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/ui"
@@ -43,6 +42,22 @@ func (l *EnrollmentLayer) Name() string {
 	return "enrollment"
 }
 
+// RequiredScopes returns the scopes needed for the given operation.
+func (l *EnrollmentLayer) RequiredScopes(op Operation) []string {
+	switch op {
+	case OpInstall:
+		// Enrollment writes .github/workflows/fullsend.yaml to target repos
+		// and creates PRs. The workflow scope is needed for the workflow file.
+		return []string{"repo", "workflow"}
+	case OpUninstall:
+		return nil // no-op
+	case OpAnalyze:
+		return []string{"repo"}
+	default:
+		return nil
+	}
+}
+
 // Install creates enrollment PRs for enabled repos that are not yet enrolled.
 // Failures on individual repos are warned and skipped — install does not stop.
 func (l *EnrollmentLayer) Install(ctx context.Context) error {
@@ -58,33 +73,49 @@ func (l *EnrollmentLayer) Install(ctx context.Context) error {
 	return nil
 }
 
-// enrollRepo creates an enrollment PR for a single repo.
+// enrollRepo creates an enrollment PR for a single repo, or updates the
+// shim workflow on an existing enrollment branch if a PR already exists.
+// Idempotent: skips repos that already have the shim workflow merged on
+// the default branch.
 func (l *EnrollmentLayer) enrollRepo(ctx context.Context, repo string) error {
-	// Check if already enrolled
+	// Check if already enrolled (shim workflow on default branch).
 	_, err := l.client.GetFileContent(ctx, l.org, repo, shimWorkflowPath)
 	if err == nil {
 		l.ui.StepInfo(fmt.Sprintf("%s already enrolled", repo))
 		return nil
 	}
-	if !forge.IsNotFound(err) {
-		return fmt.Errorf("checking enrollment status for %s: %w", repo, err)
+
+	// Check if there's already an open enrollment PR from a previous run.
+	// If so, update the shim workflow on the branch to reflect the latest
+	// content (e.g., security model changes) rather than skipping.
+	prs, err := l.client.ListRepoPullRequests(ctx, l.org, repo)
+	if err == nil {
+		for _, pr := range prs {
+			if pr.Title == "Connect to fullsend agent pipeline" {
+				return l.updateExistingEnrollment(ctx, repo, pr)
+			}
+		}
 	}
 
 	l.ui.StepStart(fmt.Sprintf("Enrolling %s", repo))
 
-	// Create branch for the enrollment PR
+	// Create branch for the enrollment PR.
+	// Idempotent: if the branch exists from a previous partial run, proceed.
 	if err := l.client.CreateBranch(ctx, l.org, repo, enrollBranch); err != nil {
-		return fmt.Errorf("creating branch: %w", err)
+		if !forge.IsNotFound(err) {
+			l.ui.StepInfo(fmt.Sprintf("Branch %s may already exist, continuing", enrollBranch))
+		}
 	}
 
-	// Write shim workflow to the branch
+	// Write shim workflow to the branch using upsert to handle re-runs
+	// where the branch exists with an old version of the file.
 	content := l.shimWorkflowContent()
-	if err := l.client.CreateFileOnBranch(ctx, l.org, repo, enrollBranch, shimWorkflowPath,
+	if err := l.client.CreateOrUpdateFileOnBranch(ctx, l.org, repo, enrollBranch, shimWorkflowPath,
 		"chore: add fullsend shim workflow", []byte(content)); err != nil {
 		return fmt.Errorf("writing shim workflow: %w", err)
 	}
 
-	// Create enrollment PR
+	// Create enrollment PR.
 	baseBranch := l.defaultBranches[repo]
 	if baseBranch == "" {
 		baseBranch = "main"
@@ -108,6 +139,22 @@ func (l *EnrollmentLayer) enrollRepo(ctx context.Context, repo string) error {
 	return nil
 }
 
+// updateExistingEnrollment updates the shim workflow on an existing
+// enrollment branch so the PR always reflects the latest content.
+func (l *EnrollmentLayer) updateExistingEnrollment(ctx context.Context, repo string, pr forge.ChangeProposal) error {
+	l.ui.StepStart(fmt.Sprintf("Updating shim workflow on %s", repo))
+
+	content := l.shimWorkflowContent()
+	if err := l.client.CreateOrUpdateFileOnBranch(ctx, l.org, repo, enrollBranch, shimWorkflowPath,
+		"chore: update fullsend shim workflow", []byte(content)); err != nil {
+		return fmt.Errorf("updating shim workflow: %w", err)
+	}
+
+	l.ui.StepDone(fmt.Sprintf("Updated enrollment PR for %s", repo))
+	l.ui.PRLink(repo, pr.URL)
+	return nil
+}
+
 // Uninstall is a no-op. Individual repo cleanup is not automated —
 // repos keep their shim workflows.
 func (l *EnrollmentLayer) Uninstall(_ context.Context) error {
@@ -123,10 +170,8 @@ func (l *EnrollmentLayer) Analyze(ctx context.Context) (*LayerReport, error) {
 		_, err := l.client.GetFileContent(ctx, l.org, repo, shimWorkflowPath)
 		if err == nil {
 			enrolled = append(enrolled, repo)
-		} else if forge.IsNotFound(err) {
-			notEnrolled = append(notEnrolled, repo)
 		} else {
-			return nil, fmt.Errorf("checking enrollment for %s: %w", repo, err)
+			notEnrolled = append(notEnrolled, repo)
 		}
 	}
 
@@ -154,10 +199,16 @@ func (l *EnrollmentLayer) Analyze(ctx context.Context) (*LayerReport, error) {
 	return report, nil
 }
 
-// shimWorkflowContent returns the shim workflow YAML with the org name substituted.
+// shimWorkflowContent returns the shim workflow YAML.
+// Uses github.repository_owner so the content is org-agnostic.
 func (l *EnrollmentLayer) shimWorkflowContent() string {
-	tmpl := `# fullsend shim workflow
-# Routes events to the reusable agent dispatch workflow in .fullsend.
+	return `# fullsend shim workflow
+# Routes events to the agent dispatch workflow in .fullsend.
+#
+# Security: pull_request_target runs the BASE branch version of this workflow,
+# preventing PRs from modifying it to exfiltrate the dispatch token.
+# This shim never checks out PR code, so it is not vulnerable to "pwn request"
+# attacks (see: Trivy CVE-2026-33634, hackerbot-claw campaign).
 name: fullsend
 
 on:
@@ -165,19 +216,23 @@ on:
     types: [opened, edited, labeled]
   issue_comment:
     types: [created]
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted]
 
 jobs:
   dispatch:
-    uses: {org}/.fullsend/.github/workflows/agent.yaml@main
-    with:
-      event_type: ${{ github.event_name }}
-      event_payload: ${{ toJSON(github.event) }}
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.FULLSEND_FULLSEND_APP_PRIVATE_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to fullsend
+        env:
+          GH_TOKEN: ${{ secrets.FULLSEND_DISPATCH_TOKEN }}
+        run: |
+          gh workflow run agent.yaml \
+            --repo "${{ github.repository_owner }}/.fullsend" \
+            --field event_type="${{ github.event_name }}" \
+            --field source_repo="${{ github.repository }}" \
+            --field event_payload='${{ toJSON(github.event) }}'
 `
-	return strings.ReplaceAll(tmpl, "{org}", l.org)
 }

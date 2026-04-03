@@ -138,7 +138,7 @@ func (s *Setup) WithSecretExists(fn SecretExistsFunc) *Setup {
 //  4. If not found, run the manifest flow to create a new app.
 //  5. After creation, ensure the app is installed on the org.
 func (s *Setup) Run(ctx context.Context, org, role string) (*AppCredentials, error) {
-	slug := expectedAppSlug(org, role)
+	slug := ExpectedAppSlug(org, role)
 	s.ui.StepStart(fmt.Sprintf("Checking for existing app: %s", slug))
 
 	inst, found, err := s.findExistingInstallation(ctx, org, role, slug)
@@ -167,6 +167,12 @@ func (s *Setup) Run(ctx context.Context, org, role string) (*AppCredentials, err
 
 // findExistingInstallation looks for an installation matching the role,
 // first by known slug override, then by expected slug convention.
+//
+// Users can rename GitHub Apps during the manifest creation flow, so the
+// actual slug may differ from the convention ({org}-{role}). We
+// store the actual slug in config.yaml and check knownSlugs first to handle
+// renamed apps. The expected slug is only used as a fallback for first-time
+// detection.
 func (s *Setup) findExistingInstallation(
 	ctx context.Context, org, role, expectedSlug string,
 ) (*forge.Installation, bool, error) {
@@ -196,8 +202,17 @@ func (s *Setup) findExistingInstallation(
 	return nil, false, nil
 }
 
-// handleExistingApp decides whether to reuse an existing app or report
-// that its private key is lost.
+// handleExistingApp reuses an existing app if its credentials are still
+// available, or reports that the private key is lost.
+//
+// GitHub App PEM private keys are only available at creation time — the
+// manifest code exchange (POST /app-manifests/{code}/conversions) is the
+// one and only time the PEM is returned. If the secret wasn't stored or
+// was deleted, the key is lost and the app must be deleted and recreated.
+// This is why we check RepoSecretExists before reusing.
+//
+// When an existing app is found with valid credentials, it is reused
+// automatically. To get fresh apps, run uninstall first, then install.
 func (s *Setup) handleExistingApp(inst *forge.Installation, role string) (*AppCredentials, error) {
 	s.ui.StepDone(fmt.Sprintf("Found existing app: %s (ID: %d)", inst.AppSlug, inst.AppID))
 
@@ -208,34 +223,26 @@ func (s *Setup) handleExistingApp(inst *forge.Installation, role string) (*AppCr
 		}
 
 		if exists {
-			reuse, err := s.prompter.Confirm(
-				fmt.Sprintf("App %s already exists with stored credentials. Reuse it?", inst.AppSlug),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("prompting for reuse: %w", err)
-			}
-			if reuse {
-				s.ui.StepDone("Reusing existing app")
-				return &AppCredentials{
-					AppID: inst.AppID,
-					Slug:  inst.AppSlug,
-					Name:  inst.AppSlug,
-					// Empty PEM signals reuse of existing credentials.
-				}, nil
-			}
-			// User declined reuse — fall through to manifest flow.
-			return nil, fmt.Errorf("user declined to reuse existing app %s; delete it first to recreate", inst.AppSlug)
+			s.ui.StepDone(fmt.Sprintf("Reusing existing app %s (credentials present)", inst.AppSlug))
+			return &AppCredentials{
+				AppID: inst.AppID,
+				Slug:  inst.AppSlug,
+				Name:  inst.AppSlug,
+				// Empty PEM signals reuse of existing credentials.
+			}, nil
 		}
 
 		// Secret doesn't exist — private key is lost.
 		return nil, fmt.Errorf(
 			"app %s exists but its private key secret is missing; "+
-				"delete the app at https://github.com/apps/%s and re-run install",
+				"run 'fullsend admin uninstall' first, then delete the app at "+
+				"https://github.com/apps/%s and re-run install",
 			inst.AppSlug, inst.AppSlug,
 		)
 	}
 
 	// No secretExists function — can't check, assume reuse.
+	s.ui.StepDone(fmt.Sprintf("Reusing existing app %s", inst.AppSlug))
 	return &AppCredentials{
 		AppID: inst.AppID,
 		Slug:  inst.AppSlug,
@@ -259,12 +266,7 @@ type manifestResponse struct {
 // GitHub's app creation page with a manifest, and waits for the
 // callback with the conversion code.
 func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCredentials, error) {
-	appCfg := ghTypes.AgentAppConfig(org, role)
-	manifest, err := json.Marshal(appCfg)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling app manifest: %w", err)
-	}
-
+	// Start the local listener first so we know the port for the redirect URL.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("starting local listener: %w", err)
@@ -275,6 +277,15 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 	formURL := fmt.Sprintf("http://127.0.0.1:%d/", port)
 	githubFormAction := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/new", org)
+
+	// Build the manifest with redirect_url included — GitHub requires it
+	// inside the JSON manifest, not as a separate form field.
+	appCfg := ghTypes.AgentAppConfig(org, role)
+	appCfg.RedirectURL = callbackURL
+	manifest, err := json.Marshal(appCfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling app manifest: %w", err)
+	}
 
 	type result struct {
 		creds *AppCredentials
@@ -295,7 +306,6 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 <p>Redirecting to GitHub...</p>
 <form id="manifest-form" method="post" action="%s">
   <input type="hidden" name="manifest" value="%s">
-  <input type="hidden" name="redirect_url" value="%s">
 </form>
 <script>document.getElementById('manifest-form').submit();</script>
 </body>
@@ -304,7 +314,6 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 			html.EscapeString(appCfg.Name),
 			html.EscapeString(githubFormAction),
 			html.EscapeString(string(manifest)),
-			html.EscapeString(callbackURL),
 		)
 		fmt.Fprint(w, page)
 	})
@@ -335,7 +344,7 @@ func (s *Setup) runManifestFlow(ctx context.Context, org, role string) (*AppCred
 <h2>App %s created successfully!</h2>
 <p>You can close this tab and return to the terminal.</p>
 </body>
-</html>`, html.EscapeString(creds.Name))
+</html>`, creds.Name)
 		resultCh <- result{creds: creds}
 	})
 
@@ -418,6 +427,15 @@ func (s *Setup) exchangeManifestCode(ctx context.Context, code string) (*AppCred
 
 // ensureInstalled checks that the app is installed on the org, prompting
 // the user to install it if not.
+//
+// The installation URL must be /apps/{slug}/installations/new without any
+// query parameters. Earlier iterations used target_id=0 which is invalid.
+// installPollInterval is how often we check for the app installation.
+const installPollInterval = 2 * time.Second
+
+// installPollTimeout is how long we wait for the user to install the app.
+const installPollTimeout = 5 * time.Minute
+
 func (s *Setup) ensureInstalled(ctx context.Context, org, slug string) error {
 	installations, err := s.client.ListOrgInstallations(ctx, org)
 	if err != nil {
@@ -431,40 +449,44 @@ func (s *Setup) ensureInstalled(ctx context.Context, org, slug string) error {
 		}
 	}
 
-	// App not installed — prompt user to install.
+	// App not installed — open browser and poll until it appears.
 	installURL := fmt.Sprintf("https://github.com/apps/%s/installations/new", slug)
 	s.ui.StepWarn(fmt.Sprintf("App %s is not yet installed on %s", slug, org))
-	s.ui.StepInfo(fmt.Sprintf("Please install it at: %s", installURL))
+	s.ui.StepStart("Opening browser for installation...")
 
 	if err := s.browser.Open(ctx, installURL); err != nil {
 		s.ui.StepWarn(fmt.Sprintf("Could not open browser: %v", err))
+		s.ui.StepInfo(fmt.Sprintf("Install manually at: %s", installURL))
 	}
 
-	if err := s.prompter.WaitForEnter("Press Enter after installing the app..."); err != nil {
-		return fmt.Errorf("waiting for user: %w", err)
-	}
+	s.ui.StepInfo("Waiting for installation (will detect automatically)...")
 
-	// Verify installation.
-	installations, err = s.client.ListOrgInstallations(ctx, org)
-	if err != nil {
-		return fmt.Errorf("verifying installation: %w", err)
-	}
+	// Poll until the app appears in installations or we time out.
+	pollCtx, cancel := context.WithTimeout(ctx, installPollTimeout)
+	defer cancel()
 
-	for _, inst := range installations {
-		if inst.AppSlug == slug {
-			s.ui.StepDone(fmt.Sprintf("App %s installed successfully", slug))
-			return nil
+	for {
+		select {
+		case <-pollCtx.Done():
+			return fmt.Errorf("timed out waiting for app %s to be installed on %s", slug, org)
+		case <-time.After(installPollInterval):
+			installations, err := s.client.ListOrgInstallations(pollCtx, org)
+			if err != nil {
+				continue // transient errors — keep polling
+			}
+			for _, inst := range installations {
+				if inst.AppSlug == slug {
+					s.ui.StepDone(fmt.Sprintf("App %s installed successfully", slug))
+					return nil
+				}
+			}
 		}
 	}
-
-	return fmt.Errorf("app %s was not found in org %s after installation attempt", slug, org)
 }
 
-// expectedAppSlug returns the conventional app slug for a given org and role.
-// This matches the naming convention used by ghTypes.AgentAppConfig.
-func expectedAppSlug(org, role string) string {
-	if role == "fullsend" {
-		return "fullsend-" + org
-	}
-	return "fullsend-" + org + "-" + role
+// ExpectedAppSlug returns the conventional app slug for a given org and role.
+// The convention is simply <org>-<role> for all roles.
+// Used during uninstall to infer app names when config.yaml is unavailable.
+func ExpectedAppSlug(org, role string) string {
+	return org + "-" + role
 }

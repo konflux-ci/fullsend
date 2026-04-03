@@ -52,43 +52,43 @@ func TestExpectedAppSlug(t *testing.T) {
 			name:     "fullsend role uses org only",
 			org:      "myorg",
 			role:     "fullsend",
-			expected: "fullsend-myorg",
+			expected: "myorg-fullsend",
 		},
 		{
 			name:     "triage role appends role suffix",
 			org:      "myorg",
 			role:     "triage",
-			expected: "fullsend-myorg-triage",
+			expected: "myorg-triage",
 		},
 		{
 			name:     "coder role appends role suffix",
 			org:      "acme",
 			role:     "coder",
-			expected: "fullsend-acme-coder",
+			expected: "acme-coder",
 		},
 		{
 			name:     "review role appends role suffix",
 			org:      "acme",
 			role:     "review",
-			expected: "fullsend-acme-review",
+			expected: "acme-review",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := expectedAppSlug(tc.org, tc.role)
+			got := ExpectedAppSlug(tc.org, tc.role)
 			assert.Equal(t, tc.expected, got)
 		})
 	}
 }
 
-func TestSetup_ExistingApp_SecretExists_Reuse(t *testing.T) {
+func TestSetup_ExistingApp_SecretExists_AutoReuse(t *testing.T) {
 	client := &forge.FakeClient{
 		Installations: []forge.Installation{
-			{ID: 100, AppID: 10, AppSlug: "fullsend-myorg"},
+			{ID: 100, AppID: 10, AppSlug: "myorg-fullsend"},
 		},
 	}
-	prompter := &fakePrompter{confirmResult: true}
+	prompter := &fakePrompter{}
 	browser := &fakeBrowser{}
 	printer := ui.New(&discardWriter{})
 
@@ -102,38 +102,16 @@ func TestSetup_ExistingApp_SecretExists_Reuse(t *testing.T) {
 
 	// Should return credentials signaling reuse (empty PEM).
 	assert.Equal(t, 10, creds.AppID)
-	assert.Equal(t, "fullsend-myorg", creds.Slug)
+	assert.Equal(t, "myorg-fullsend", creds.Slug)
 	assert.Empty(t, creds.PEM, "PEM should be empty to signal reuse")
-	assert.True(t, prompter.confirmCalled, "should have asked to confirm reuse")
-}
-
-func TestSetup_ExistingApp_SecretExists_DeclineReuse(t *testing.T) {
-	client := &forge.FakeClient{
-		Installations: []forge.Installation{
-			{ID: 100, AppID: 10, AppSlug: "fullsend-myorg"},
-		},
-	}
-	prompter := &fakePrompter{confirmResult: false}
-	browser := &fakeBrowser{}
-	printer := ui.New(&discardWriter{})
-
-	s := NewSetup(client, prompter, browser, printer).
-		WithSecretExists(func(_ string) (bool, error) {
-			return true, nil
-		})
-
-	// When the user declines reuse, an error is returned telling them
-	// to delete the app first.
-	_, err := s.Run(context.Background(), "myorg", "fullsend")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "declined")
-	assert.True(t, prompter.confirmCalled, "should have asked to confirm reuse")
+	// Should NOT have prompted — auto-reuse is silent.
+	assert.False(t, prompter.confirmCalled, "should not prompt for reuse")
 }
 
 func TestSetup_ExistingApp_NoSecret(t *testing.T) {
 	client := &forge.FakeClient{
 		Installations: []forge.Installation{
-			{ID: 100, AppID: 10, AppSlug: "fullsend-myorg-triage"},
+			{ID: 100, AppID: 10, AppSlug: "myorg-triage"},
 		},
 	}
 	prompter := &fakePrompter{}
@@ -156,7 +134,7 @@ func TestSetup_KnownSlug_Match(t *testing.T) {
 			{ID: 200, AppID: 20, AppSlug: "custom-slug-name"},
 		},
 	}
-	prompter := &fakePrompter{confirmResult: true}
+	prompter := &fakePrompter{}
 	browser := &fakeBrowser{}
 	printer := ui.New(&discardWriter{})
 
@@ -172,6 +150,7 @@ func TestSetup_KnownSlug_Match(t *testing.T) {
 	assert.Equal(t, 20, creds.AppID)
 	assert.Equal(t, "custom-slug-name", creds.Slug)
 	assert.Empty(t, creds.PEM)
+	assert.False(t, prompter.confirmCalled, "should not prompt for reuse")
 }
 
 func TestSetup_NoExistingApp(t *testing.T) {

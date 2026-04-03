@@ -47,8 +47,9 @@ func TestEnrollmentLayer_Install_CreatesEnrollmentPRs(t *testing.T) {
 		assert.Equal(t, "test-org", f.Owner)
 		assert.Equal(t, shimWorkflowPath, f.Path)
 		assert.Equal(t, enrollBranch, f.Branch)
-		// Verify shim workflow content contains the org name
-		assert.Contains(t, string(f.Content), "test-org/.fullsend/.github/workflows/agent.yaml@main")
+		// Verify shim workflow content uses dispatch token and repository_owner
+		assert.Contains(t, string(f.Content), "FULLSEND_DISPATCH_TOKEN")
+		assert.Contains(t, string(f.Content), "github.repository_owner")
 	}
 
 	// Should have created 2 PRs
@@ -81,9 +82,38 @@ func TestEnrollmentLayer_Install_SkipsAlreadyEnrolled(t *testing.T) {
 	require.Len(t, client.CreatedProposals, 1)
 }
 
+func TestEnrollmentLayer_Install_UpdatesExistingPR(t *testing.T) {
+	client := &forge.FakeClient{
+		PullRequests: map[string][]forge.ChangeProposal{
+			"test-org/repo-a": {
+				{Title: "Connect to fullsend agent pipeline", URL: "https://github.com/test-org/repo-a/pull/1", Number: 1},
+			},
+		},
+	}
+	repos := []string{"repo-a"}
+	defaults := map[string]string{"repo-a": "main"}
+	layer, _ := newEnrollmentLayer(t, client, repos, defaults)
+
+	err := layer.Install(context.Background())
+	require.NoError(t, err)
+
+	// Should have updated the file on the branch, not created a new PR.
+	require.Len(t, client.CreatedFiles, 1)
+	assert.Equal(t, "repo-a", client.CreatedFiles[0].Repo)
+	assert.Equal(t, enrollBranch, client.CreatedFiles[0].Branch)
+	assert.Contains(t, string(client.CreatedFiles[0].Content), "FULLSEND_DISPATCH_TOKEN")
+
+	// Should NOT have created a new branch or new PR.
+	assert.Empty(t, client.CreatedBranches)
+	// Should not have created any new PRs (the existing one was reused).
+	assert.Empty(t, client.CreatedProposals)
+}
+
 func TestEnrollmentLayer_Install_ContinuesOnError(t *testing.T) {
-	// Use a custom client that fails CreateBranch only for repo-a
-	client := &perRepoBranchErrorClient{
+	// Use a custom client that fails CreateFileOnBranch only for repo-a.
+	// This simulates a real failure (e.g., permission denied) that should
+	// trigger a warning for repo-a but not stop repo-b from enrolling.
+	client := &perRepoFileErrorClient{
 		FakeClient: &forge.FakeClient{},
 		failRepo:   "repo-a",
 	}
@@ -95,10 +125,8 @@ func TestEnrollmentLayer_Install_ContinuesOnError(t *testing.T) {
 	// Install itself should not return an error — it warns and continues
 	require.NoError(t, err)
 
-	// repo-b should still have been enrolled
-	require.Len(t, client.CreatedBranches, 1)
-	assert.Equal(t, "test-org/repo-b/fullsend/onboard", client.CreatedBranches[0])
-
+	// repo-b should still have been enrolled (branch + file + PR).
+	// repo-a should have a branch but no file or PR.
 	require.Len(t, client.CreatedFiles, 1)
 	assert.Equal(t, "repo-b", client.CreatedFiles[0].Repo)
 
@@ -196,21 +224,25 @@ func TestEnrollmentLayer_Analyze_Partial(t *testing.T) {
 	assert.Contains(t, report.WouldFix[0], "repo-b")
 }
 
-// perRepoBranchErrorClient wraps FakeClient but fails CreateBranch for a specific repo.
-type perRepoBranchErrorClient struct {
+// perRepoFileErrorClient wraps FakeClient but fails CreateOrUpdateFileOnBranch for a specific repo.
+type perRepoFileErrorClient struct {
 	*forge.FakeClient
 	failRepo string
 }
 
-func (c *perRepoBranchErrorClient) CreateBranch(ctx context.Context, owner, repo, branchName string) error {
+func (c *perRepoFileErrorClient) CreateOrUpdateFileOnBranch(_ context.Context, owner, repo, branch, path, message string, content []byte) error {
 	if repo == c.failRepo {
-		return fmt.Errorf("branch creation failed for %s", repo)
+		return fmt.Errorf("file write failed for %s", repo)
 	}
-	return c.FakeClient.CreateBranch(ctx, owner, repo, branchName)
+	return c.FakeClient.CreateOrUpdateFileOnBranch(context.Background(), owner, repo, branch, path, message, content)
 }
 
-// GetFileContent delegates to the embedded FakeClient. The failRepo has no
-// shim workflow, so the default "file not found" error triggers enrollment.
-func (c *perRepoBranchErrorClient) GetFileContent(ctx context.Context, owner, repo, path string) ([]byte, error) {
+// GetFileContent delegates to the embedded FakeClient.
+func (c *perRepoFileErrorClient) GetFileContent(ctx context.Context, owner, repo, path string) ([]byte, error) {
 	return c.FakeClient.GetFileContent(ctx, owner, repo, path)
+}
+
+// ListRepoPullRequests delegates to the embedded FakeClient.
+func (c *perRepoFileErrorClient) ListRepoPullRequests(ctx context.Context, owner, repo string) ([]forge.ChangeProposal, error) {
+	return c.FakeClient.ListRepoPullRequests(ctx, owner, repo)
 }

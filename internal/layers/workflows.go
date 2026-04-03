@@ -47,8 +47,30 @@ func (l *WorkflowsLayer) Name() string {
 	return "workflows"
 }
 
+// RequiredScopes returns the scopes needed for the given operation.
+func (l *WorkflowsLayer) RequiredScopes(op Operation) []string {
+	switch op {
+	case OpInstall:
+		// Writing to .github/workflows/ paths requires the workflow scope.
+		// Without it, GitHub returns 404 (not 403), which is deeply confusing.
+		return []string{"repo", "workflow"}
+	case OpUninstall:
+		return nil // no-op
+	case OpAnalyze:
+		return []string{"repo"}
+	default:
+		return nil
+	}
+}
+
 // Install writes the workflow files and CODEOWNERS to the .fullsend repo.
 // CODEOWNERS failure is treated as a warning, not a fatal error.
+//
+// Note: writing multiple files sequentially via the Contents API can cause
+// transient 404s because each file write creates a new commit and the branch
+// ref is updated asynchronously. The GitHub client's retry logic handles
+// this. CODEOWNERS is written last and its failure is non-fatal because
+// some orgs restrict CODEOWNERS writes to specific teams.
 func (l *WorkflowsLayer) Install(ctx context.Context) error {
 	files := map[string][]byte{
 		agentWorkflowPath:   []byte(agentWorkflowContent),
@@ -126,22 +148,23 @@ func (l *WorkflowsLayer) codeownersContent() string {
 	return fmt.Sprintf("# fullsend configuration is governed by org admins.\n* @%s\n", l.authenticatedUser)
 }
 
-const agentWorkflowContent = `# Reusable agent dispatch workflow
-# Called by per-repo shim workflows to run fullsend agents.
+const agentWorkflowContent = `# Agent dispatch workflow
+# Triggered by shim workflows in enrolled repos via workflow_dispatch.
+# Reads its own repo secrets (App PEMs) — secrets never leave this repo.
 name: Agent Dispatch
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       event_type:
+        required: true
+        type: string
+      source_repo:
         required: true
         type: string
       event_payload:
         required: true
         type: string
-    secrets:
-      APP_PRIVATE_KEY:
-        required: true
 
 jobs:
   dispatch:
@@ -149,9 +172,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run fullsend entrypoint
-        run: echo "fullsend entrypoint - event=${{ inputs.event_type }}"
+        run: echo "fullsend entrypoint - event=${{ inputs.event_type }} repo=${{ inputs.source_repo }}"
         env:
           EVENT_TYPE: ${{ inputs.event_type }}
+          SOURCE_REPO: ${{ inputs.source_repo }}
           EVENT_PAYLOAD: ${{ inputs.event_payload }}
 `
 

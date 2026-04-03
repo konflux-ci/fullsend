@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap lint check fmt lint-adr-status lint-adr-numbers lint-adr-frontmatter mindmap \
-       go-build go-test go-lint go-fmt go-vet go-tidy
+.PHONY: help bootstrap lint check fmt lint-adr-status lint-adr-numbers lint-adr-frontmatter \
+       mindmap go-build go-test go-lint go-fmt go-vet go-tidy e2e-test e2e-playwright \
+       e2e-export-session e2e-upload-session
 
 help:
 	@echo "Available targets:"
@@ -19,6 +20,9 @@ help:
 	@echo "  go-fmt               - Format Go code"
 	@echo "  go-vet               - Run go vet"
 	@echo "  go-tidy              - Run go mod tidy"
+	@echo "  e2e-test             - Run admin e2e tests (requires E2E_GITHUB_SESSION_FILE or E2E_GITHUB_USERNAME + E2E_GITHUB_PASSWORD)"
+	@echo "  e2e-export-session   - Login to GitHub and export a Playwright session file"
+	@echo "  e2e-upload-session   - Export session and upload it as a GitHub repo secret"
 
 # Install all development tools needed for linting, formatting, and pre-commit hooks.
 # Prerequisites: uv (https://docs.astral.sh/uv/) and go (https://go.dev/)
@@ -91,3 +95,27 @@ go-vet:
 
 go-tidy:
 	go mod tidy
+
+E2E_SESSION_FILE ?= .playwright/session.json
+
+e2e-test: e2e-playwright
+	@if [ -z "$$E2E_GITHUB_SESSION_FILE" ] && [ -n "$$E2E_GITHUB_USERNAME" ] && [ -n "$$E2E_GITHUB_PASSWORD" ]; then \
+		echo "==> No session file set, generating one from credentials..."; \
+		$(MAKE) e2e-export-session; \
+		export E2E_GITHUB_SESSION_FILE="$(E2E_SESSION_FILE)"; \
+	fi; \
+	go test -tags e2e -v -count=1 -timeout 4m ./e2e/admin/
+
+e2e-export-session: e2e-playwright
+	E2E_GITHUB_SESSION_FILE="$(E2E_SESSION_FILE)" go run ./e2e/cmd/export-session/
+
+e2e-upload-session: e2e-export-session
+	@echo "==> Uploading session to GitHub repo secret..."
+	base64 -w0 "$(E2E_SESSION_FILE)" | gh secret set E2E_GITHUB_SESSION
+	@echo "==> Done. Session uploaded as E2E_GITHUB_SESSION."
+
+e2e-playwright:
+	@if [ -z "$$(ls -d $(HOME)/.cache/ms-playwright/chromium-* 2>/dev/null)" ]; then \
+		echo "==> Installing Playwright Chromium..."; \
+		go run github.com/playwright-community/playwright-go/cmd/playwright install chromium; \
+	fi

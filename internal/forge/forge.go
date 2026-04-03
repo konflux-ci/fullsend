@@ -22,6 +22,7 @@ func IsNotFound(err error) bool {
 
 // Repository represents a repository on a git forge.
 type Repository struct {
+	ID            int64
 	Name          string
 	FullName      string
 	DefaultBranch string
@@ -65,12 +66,22 @@ type Client interface {
 
 	// File operations
 	CreateFile(ctx context.Context, owner, repo, path, message string, content []byte) error
+
+	// CreateOrUpdateFile creates a file or updates it if it already exists.
+	// On GitHub, updating an existing file requires the current file's SHA
+	// (optimistic concurrency control). The GitHub implementation handles
+	// this by fetching the existing SHA before writing. Without it, the
+	// API returns a 422 "sha wasn't supplied" error.
 	CreateOrUpdateFile(ctx context.Context, owner, repo, path, message string, content []byte) error
+
 	GetFileContent(ctx context.Context, owner, repo, path string) ([]byte, error)
 
 	// Branch operations
 	CreateBranch(ctx context.Context, owner, repo, branchName string) error
 	CreateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error
+	// CreateOrUpdateFileOnBranch creates or updates a file on a specific branch.
+	// Combines SHA-aware upsert with branch targeting.
+	CreateOrUpdateFileOnBranch(ctx context.Context, owner, repo, branch, path, message string, content []byte) error
 
 	// Change proposals (PRs/MRs)
 	CreateChangeProposal(ctx context.Context, owner, repo, title, body, head, base string) (*ChangeProposal, error)
@@ -79,15 +90,27 @@ type Client interface {
 	// Authentication
 	GetAuthenticatedUser(ctx context.Context) (string, error)
 
+	// GetTokenScopes returns the OAuth scopes granted to the current token.
+	// On GitHub, this is read from the X-OAuth-Scopes response header.
+	// Returns nil (not an error) if the forge doesn't support scope introspection.
+	GetTokenScopes(ctx context.Context) ([]string, error)
+
 	// Secrets and variables
 	CreateRepoSecret(ctx context.Context, owner, repo, name, value string) error
 	RepoSecretExists(ctx context.Context, owner, repo, name string) (bool, error)
 	CreateOrUpdateRepoVariable(ctx context.Context, owner, repo, name, value string) error
 	RepoVariableExists(ctx context.Context, owner, repo, name string) (bool, error)
 
+	// Org-level secrets (for cross-repo dispatch tokens)
+	CreateOrgSecret(ctx context.Context, org, name, value string, selectedRepoIDs []int64) error
+	OrgSecretExists(ctx context.Context, org, name string) (bool, error)
+	DeleteOrgSecret(ctx context.Context, org, name string) error
+	SetOrgSecretRepos(ctx context.Context, org, name string, repoIDs []int64) error
+
 	// CI/Workflow operations
 	GetLatestWorkflowRun(ctx context.Context, owner, repo, workflowFile string) (*WorkflowRun, error)
 	GetWorkflowRun(ctx context.Context, owner, repo string, runID int) (*WorkflowRun, error)
+	DispatchWorkflow(ctx context.Context, owner, repo, workflowFile, ref string, inputs map[string]string) error
 
 	// App installation operations
 	ListOrgInstallations(ctx context.Context, org string) ([]Installation, error)

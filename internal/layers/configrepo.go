@@ -26,8 +26,11 @@ type ConfigRepoLayer struct {
 var _ Layer = (*ConfigRepoLayer)(nil)
 
 // NewConfigRepoLayer creates a new ConfigRepoLayer.
-// Set hasPrivate to true if the org has private repo capability —
-// the config repo will be created as private in that case.
+// Set hasPrivate to true if the org has any private repos — the config repo
+// will be created as private to match the org's existing pattern. For orgs
+// with only public repos (e.g., open source orgs), it is created as public
+// to avoid surprises. This matters because the .fullsend repo may contain
+// workflow files referenced by public repos.
 func NewConfigRepoLayer(org string, client forge.Client, cfg *config.OrgConfig, printer *ui.Printer, hasPrivate bool) *ConfigRepoLayer {
 	return &ConfigRepoLayer{
 		org:        org,
@@ -42,8 +45,30 @@ func (l *ConfigRepoLayer) Name() string {
 	return "config-repo"
 }
 
+// RequiredScopes returns the scopes needed for the given operation.
+func (l *ConfigRepoLayer) RequiredScopes(op Operation) []string {
+	switch op {
+	case OpInstall:
+		return []string{"repo"}
+	case OpUninstall:
+		// Deleting the config repo requires the delete_repo scope, which
+		// most tokens don't have by default. Fail early with a clear message.
+		return []string{"repo", "delete_repo"}
+	case OpAnalyze:
+		return []string{"repo"}
+	default:
+		return nil
+	}
+}
+
 // Install creates the .fullsend config repo (if it doesn't exist) and
 // writes config.yaml into it.
+//
+// Timing note: after CreateRepo with auto_init, the default branch may not
+// be fully materialized yet. The Contents API call to write config.yaml can
+// get transient 404s. The GitHub client's retry-with-backoff in do() handles
+// this, but callers should be aware that the first file write to a newly
+// created repo may take several seconds to succeed.
 func (l *ConfigRepoLayer) Install(ctx context.Context) error {
 	exists, err := l.repoExists(ctx)
 	if err != nil {
@@ -55,10 +80,18 @@ func (l *ConfigRepoLayer) Install(ctx context.Context) error {
 		desc := fmt.Sprintf("fullsend configuration for %s", l.org)
 		_, err := l.client.CreateRepo(ctx, l.org, forge.ConfigRepoName, desc, l.hasPrivate)
 		if err != nil {
-			l.ui.StepFail("Failed to create " + forge.ConfigRepoName + " repository")
-			return fmt.Errorf("creating config repo: %w", err)
+			// Idempotent: if the repo was created between our check and this
+			// call (race), or if we got an "already exists" error, proceed.
+			recheck, recheckErr := l.repoExists(ctx)
+			if recheckErr == nil && recheck {
+				l.ui.StepInfo(forge.ConfigRepoName + " repository already exists")
+			} else {
+				l.ui.StepFail("Failed to create " + forge.ConfigRepoName + " repository")
+				return fmt.Errorf("creating config repo: %w", err)
+			}
+		} else {
+			l.ui.StepDone("Created " + forge.ConfigRepoName + " repository")
 		}
-		l.ui.StepDone("Created " + forge.ConfigRepoName + " repository")
 	} else {
 		l.ui.StepInfo(forge.ConfigRepoName + " repository already exists")
 	}
@@ -81,9 +114,24 @@ func (l *ConfigRepoLayer) Install(ctx context.Context) error {
 }
 
 // Uninstall deletes the .fullsend config repo.
+// Idempotent: if the repo is already gone, this is a no-op.
 func (l *ConfigRepoLayer) Uninstall(ctx context.Context) error {
+	exists, err := l.repoExists(ctx)
+	if err != nil {
+		return fmt.Errorf("checking for config repo: %w", err)
+	}
+	if !exists {
+		l.ui.StepInfo(forge.ConfigRepoName + " repository already deleted")
+		return nil
+	}
+
 	l.ui.StepStart("Deleting " + forge.ConfigRepoName + " repository")
 	if err := l.client.DeleteRepo(ctx, l.org, forge.ConfigRepoName); err != nil {
+		if forge.IsNotFound(err) {
+			// Race: deleted between our check and the delete call.
+			l.ui.StepInfo(forge.ConfigRepoName + " repository already deleted")
+			return nil
+		}
 		l.ui.StepFail("Failed to delete " + forge.ConfigRepoName + " repository")
 		return fmt.Errorf("deleting config repo: %w", err)
 	}

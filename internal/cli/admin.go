@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,7 +31,16 @@ func newAdminCmd() *cobra.Command {
 	return cmd
 }
 
-// resolveToken finds a GitHub token from env vars or gh CLI.
+// resolveToken finds a GitHub token by checking, in order:
+//  1. GH_TOKEN env var
+//  2. GITHUB_TOKEN env var
+//  3. gh auth token (subprocess call to the GitHub CLI)
+//
+// This chain allows users who are already authenticated with gh to use
+// fullsend without manually exporting tokens. Note that some operations
+// (like repo deletion) require the delete_repo scope, and workflow file
+// writes require the workflow scope — scopes that gh auth doesn't request
+// by default. Use: gh auth refresh -s delete_repo,workflow
 func resolveToken() (string, error) {
 	if token := os.Getenv("GH_TOKEN"); token != "" {
 		return token, nil
@@ -238,7 +249,14 @@ func runDryRun(ctx context.Context, client forge.Client, printer *ui.Printer, or
 		})
 	}
 
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds)
+	enrolledRepoIDs := collectEnrolledRepoIDs(allRepos, enabledRepos)
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs)
+
+	if err := runPreflight(ctx, stack, layers.OpInstall, client, printer); err != nil {
+		return err
+	}
+	printer.Blank()
+
 	return printAnalysis(ctx, stack, printer)
 }
 
@@ -298,6 +316,9 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 	printer.StepDone(fmt.Sprintf("Found %d repositories", len(allRepos)))
 	printer.Blank()
 
+	// Collect IDs for repos that will be enrolled.
+	enrolledRepoIDs := collectEnrolledRepoIDs(allRepos, enabledRepos)
+
 	// Build agent entries for config.
 	agents := make([]config.AgentEntry, len(agentCreds))
 	for i, ac := range agentCreds {
@@ -311,10 +332,45 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 		return fmt.Errorf("getting authenticated user: %w", err)
 	}
 
-	printer.Header("Installing layers")
+	// Build stack with empty dispatch token for preflight — we check scopes
+	// before prompting the user so we fail early on missing admin:org.
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs)
+
+	if err := runPreflight(ctx, stack, layers.OpInstall, client, printer); err != nil {
+		return err
+	}
 	printer.Blank()
 
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds)
+	// Create the .fullsend config repo and write workflow files BEFORE
+	// prompting for the dispatch token. The user needs the repo to exist
+	// so they can select it when creating the fine-grained PAT, and the
+	// agent.yaml workflow must exist so we can verify the PAT by attempting
+	// a real dispatch. Both layers are idempotent, so running them again
+	// in the full stack is harmless.
+	printer.Header("Preparing config repo")
+	printer.Blank()
+	configRepoLayer := layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate)
+	if err := configRepoLayer.Install(ctx); err != nil {
+		return fmt.Errorf("creating config repo: %w", err)
+	}
+	workflowsLayer := layers.NewWorkflowsLayer(org, client, printer, user)
+	if err := workflowsLayer.Install(ctx); err != nil {
+		return fmt.Errorf("writing workflows: %w", err)
+	}
+	printer.Blank()
+
+	// Dispatch token setup — the .fullsend repo now exists so the user
+	// can select it when creating the fine-grained PAT.
+	dispatchToken, err := promptDispatchToken(ctx, client, printer, org)
+	if err != nil {
+		return err
+	}
+
+	// Rebuild stack with the actual dispatch token.
+	stack = buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs)
+
+	printer.Header("Installing layers")
+	printer.Blank()
 
 	if err := stack.InstallAll(ctx); err != nil {
 		return fmt.Errorf("installation failed: %w", err)
@@ -332,7 +388,11 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 
 // runUninstall tears down the fullsend installation.
 func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer, org string) error {
-	// Try to load existing config for agent info.
+	// Try to load agent slugs from existing config. If the .fullsend repo
+	// is already gone (e.g., previous partial uninstall), fall back to the
+	// default naming convention so we can still guide the user to delete
+	// the apps. Without this fallback, a partial uninstall leaves orphaned
+	// apps that block reinstallation (PEM keys are one-shot).
 	var agentSlugs []string
 	cfgData, err := client.GetFileContent(ctx, org, forge.ConfigRepoName, "config.yaml")
 	if err == nil {
@@ -342,6 +402,13 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 			}
 		}
 	}
+	if len(agentSlugs) == 0 {
+		// Config unavailable — assume default app naming convention.
+		for _, role := range config.DefaultAgentRoles() {
+			agentSlugs = append(agentSlugs, appsetup.ExpectedAppSlug(org, role))
+		}
+		printer.StepInfo("Config repo unavailable; using default app names")
+	}
 
 	// Build a minimal stack for uninstall.
 	// Only ConfigRepoLayer matters for uninstall since other layers are no-ops.
@@ -350,8 +417,14 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 		layers.NewConfigRepoLayer(org, client, emptyCfg, printer, false),
 		layers.NewWorkflowsLayer(org, client, printer, ""),
 		layers.NewSecretsLayer(org, client, nil, printer),
+		layers.NewDispatchTokenLayer(org, client, "", nil, printer),
 		layers.NewEnrollmentLayer(org, client, nil, nil, printer),
 	)
+
+	if err := runPreflight(ctx, stack, layers.OpUninstall, client, printer); err != nil {
+		return err
+	}
+	printer.Blank()
 
 	errs := stack.UninstallAll(ctx)
 	if len(errs) > 0 {
@@ -362,14 +435,54 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 
 	printer.Blank()
 
-	// Suggest manual app deletion.
+	// Check which apps actually exist before opening browser pages.
+	// GitHub App uninstallation via API (DELETE /app/installations/{id}) requires
+	// JWT auth from the app's own private key, not a PAT. Since we authenticate
+	// with a PAT, we open the browser to the app's advanced settings page instead.
+	// The correct URL for org-scoped apps is /organizations/{org}/settings/apps/{slug}/advanced
+	// (the /advanced suffix is required to see the delete button; /settings/apps/{slug}
+	// alone is for user-scoped apps and will 404 for org-scoped ones).
 	if len(agentSlugs) > 0 {
-		printer.Header("Manual cleanup required")
-		printer.StepInfo("Delete these GitHub Apps manually:")
-		for _, slug := range agentSlugs {
-			printer.StepInfo(fmt.Sprintf("  https://github.com/apps/%s", slug))
+		// Find which slugs correspond to real installed apps.
+		var existingSlugs []string
+		installations, listErr := client.ListOrgInstallations(ctx, org)
+		if listErr == nil {
+			installedSet := make(map[string]bool, len(installations))
+			for _, inst := range installations {
+				installedSet[inst.AppSlug] = true
+			}
+			for _, slug := range agentSlugs {
+				if installedSet[slug] {
+					existingSlugs = append(existingSlugs, slug)
+				} else {
+					printer.StepInfo(fmt.Sprintf("App %s not found, skipping", slug))
+				}
+			}
+		} else {
+			// Can't check — fall back to opening all of them.
+			printer.StepWarn("Could not verify which apps exist; opening all")
+			existingSlugs = agentSlugs
 		}
-		printer.Blank()
+
+		if len(existingSlugs) > 0 {
+			printer.Header("App cleanup")
+			printer.StepInfo("Opening browser for each app that needs to be deleted.")
+			printer.StepInfo("Click 'Delete GitHub App' on each page, then return here.")
+			printer.Blank()
+
+			browser := appsetup.DefaultBrowser{}
+			for _, slug := range existingSlugs {
+				deleteURL := fmt.Sprintf("https://github.com/organizations/%s/settings/apps/%s/advanced", org, slug)
+				printer.StepStart(fmt.Sprintf("Opening %s settings...", slug))
+				if err := browser.Open(ctx, deleteURL); err != nil {
+					printer.StepWarn(fmt.Sprintf("Could not open browser: %v", err))
+					printer.StepInfo(fmt.Sprintf("  Delete manually at: %s", deleteURL))
+				} else {
+					printer.StepDone(fmt.Sprintf("Opened %s", slug))
+				}
+			}
+			printer.Blank()
+		}
 	}
 
 	if len(errs) > 0 {
@@ -418,7 +531,13 @@ func runAnalyze(ctx context.Context, client forge.Client, printer *ui.Printer, o
 		return fmt.Errorf("getting authenticated user: %w", err)
 	}
 
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, nil, defaultBranches, agentCreds)
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, nil, defaultBranches, agentCreds, "", nil)
+
+	if err := runPreflight(ctx, stack, layers.OpAnalyze, client, printer); err != nil {
+		return err
+	}
+	printer.Blank()
+
 	return printAnalysis(ctx, stack, printer)
 }
 
@@ -433,13 +552,44 @@ func buildLayerStack(
 	enabledRepos []string,
 	defaultBranches map[string]string,
 	agentCreds []layers.AgentCredentials,
+	dispatchToken string,
+	enrolledRepoIDs []int64,
 ) *layers.Stack {
 	return layers.NewStack(
 		layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate),
 		layers.NewWorkflowsLayer(org, client, printer, user),
 		layers.NewSecretsLayer(org, client, agentCreds, printer),
+		layers.NewDispatchTokenLayer(org, client, dispatchToken, enrolledRepoIDs, printer),
 		layers.NewEnrollmentLayer(org, client, enabledRepos, defaultBranches, printer),
 	)
+}
+
+// runPreflight checks that the token has all required scopes for the
+// given operation. Returns nil if all scopes are present or if scope
+// introspection is unavailable (fine-grained tokens). Returns an error
+// with remediation instructions if scopes are missing.
+func runPreflight(ctx context.Context, stack *layers.Stack, op layers.Operation, client forge.Client, printer *ui.Printer) error {
+	printer.StepStart("Checking token permissions")
+
+	result, err := stack.Preflight(ctx, op, client)
+	if err != nil {
+		printer.StepFail("Could not verify token permissions")
+		return fmt.Errorf("preflight check: %w", err)
+	}
+
+	if !result.OK() {
+		printer.StepFail("Token is missing required scopes")
+		printer.Blank()
+		printer.ErrorBox("Missing token scopes", result.Error())
+		return fmt.Errorf("token is missing required scopes: %s", strings.Join(result.Missing, ", "))
+	}
+
+	if result.Skipped {
+		printer.StepWarn("Preflight skipped: fine-grained token detected (scopes cannot be verified)")
+	} else {
+		printer.StepDone("Token permissions verified")
+	}
+	return nil
 }
 
 // printAnalysis runs AnalyzeAll and prints reports.
@@ -502,6 +652,135 @@ func loadKnownSlugs(ctx context.Context, client forge.Client, org string) map[st
 		return nil
 	}
 	return cfg.AgentSlugs()
+}
+
+// collectEnrolledRepoIDs returns the IDs of repos whose names appear in
+// the enabledRepos list.
+func collectEnrolledRepoIDs(allRepos []forge.Repository, enabledRepos []string) []int64 {
+	enabled := make(map[string]bool, len(enabledRepos))
+	for _, name := range enabledRepos {
+		enabled[name] = true
+	}
+	var ids []int64
+	for _, r := range allRepos {
+		if enabled[r.Name] {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
+}
+
+// promptDispatchToken checks whether the dispatch token org secret already
+// exists and, if not, opens the browser to GitHub's pre-filled fine-grained
+// PAT creation page and prompts the user to paste the result.
+// Returns the token string (empty if reusing an existing secret).
+func promptDispatchToken(ctx context.Context, client forge.Client, printer *ui.Printer, org string) (string, error) {
+	printer.Header("Dispatch Token Setup")
+	printer.Blank()
+
+	exists, err := client.OrgSecretExists(ctx, org, "FULLSEND_DISPATCH_TOKEN")
+	if err != nil {
+		return "", fmt.Errorf("checking dispatch token: %w", err)
+	}
+
+	if exists {
+		printer.StepDone("Dispatch token already configured")
+		return "", nil
+	}
+
+	// Build a pre-filled URL for fine-grained PAT creation.
+	// GitHub supports query parameters to pre-fill name, description,
+	// resource owner, expiration, and permissions. The user only needs to:
+	//   1. Select "Only select repositories" and pick .fullsend
+	//   2. Click "Generate token"
+	//   3. Paste the token
+	escapedOrg := url.QueryEscape(org)
+	patURL := fmt.Sprintf(
+		"https://github.com/settings/personal-access-tokens/new"+
+			"?name=fullsend-dispatch-%s"+
+			"&description=Dispatch+token+for+fullsend+agent+pipeline+in+%s."+
+			"+Scoped+to+.fullsend+repo+with+Actions+write+only."+
+			"&target_name=%s"+
+			"&actions=write",
+		escapedOrg, escapedOrg, escapedOrg,
+	)
+
+	printer.StepStart("Opening browser for dispatch token creation")
+
+	browser := appsetup.DefaultBrowser{}
+	if err := browser.Open(ctx, patURL); err != nil {
+		printer.StepWarn(fmt.Sprintf("Could not open browser: %v", err))
+		printer.StepInfo("Open this URL manually:")
+		printer.StepInfo("  " + patURL)
+	} else {
+		printer.StepDone("Opened token creation page")
+	}
+
+	printer.Blank()
+	printer.StepWarn("IMPORTANT: GitHub's resource owner selector has a known quirk.")
+	printer.StepWarn("If the owner is pre-filled, you may need to de-select and")
+	printer.StepWarn("re-select the owner for the repository picker to appear.")
+	printer.Blank()
+	printer.StepInfo("In the browser:")
+	printer.StepInfo("  1. Verify the 'Resource owner' is set to " + org)
+	printer.StepInfo("     (If the repo picker doesn't appear, switch the owner")
+	printer.StepInfo("      away and back to " + org + " to force it to load)")
+	printer.StepInfo("  2. Under 'Repository access', select 'Only select repositories'")
+	printer.StepInfo("  3. Pick ONLY the .fullsend repository (not other repos)")
+	printer.StepInfo("  4. Verify 'Actions: Read and write' is checked under permissions")
+	printer.StepInfo("  5. Click 'Generate token'")
+	printer.StepInfo("  6. Copy and paste the token below")
+	printer.Blank()
+	printer.StepInfo("Paste the token here:")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", fmt.Errorf("reading dispatch token: %w", err)
+		}
+		return "", fmt.Errorf("no dispatch token provided")
+	}
+	// Aggressively strip whitespace — pasting from browser can include
+	// trailing newlines, carriage returns, or spaces that would corrupt
+	// the token when stored as a secret.
+	token := strings.TrimSpace(scanner.Text())
+	token = strings.ReplaceAll(token, "\r", "")
+	token = strings.ReplaceAll(token, "\n", "")
+	if token == "" {
+		return "", fmt.Errorf("dispatch token cannot be empty")
+	}
+
+	// Verify the token can actually dispatch workflows on .fullsend by
+	// triggering a real workflow_dispatch event. This is the exact operation
+	// the shim will perform, so if this works, the shim will work.
+	// The dispatch triggers agent.yaml with a "verify" event type — the
+	// workflow will run but the entrypoint script will see it's a verify
+	// event and exit cleanly.
+	printer.StepStart("Verifying token can dispatch workflows on " + forge.ConfigRepoName)
+	verifyClient := gh.New(token)
+	err = verifyClient.DispatchWorkflow(ctx, org, forge.ConfigRepoName, "agent.yaml", "main", map[string]string{
+		"event_type":    "verify",
+		"source_repo":   org + "/" + forge.ConfigRepoName,
+		"event_payload": "{}",
+	})
+	if err != nil {
+		printer.StepFail("Token cannot dispatch workflows on " + forge.ConfigRepoName)
+		printer.Blank()
+		printer.ErrorBox("Dispatch token verification failed",
+			"The token could not trigger a workflow on "+org+"/"+forge.ConfigRepoName+".\n\n"+
+				"This usually means the PAT was not configured correctly.\n"+
+				"Delete it at https://github.com/settings/tokens and recreate with:\n"+
+				"  1. Resource owner: "+org+"\n"+
+				"  2. Repository access: Only select repositories → "+forge.ConfigRepoName+"\n"+
+				"  3. Permissions: Actions → Read and write\n\n"+
+				"Error: "+err.Error(),
+		)
+		return "", fmt.Errorf("dispatch token verification failed")
+	}
+	printer.StepDone("Token verified — test dispatch succeeded")
+
+	printer.Blank()
+	return token, nil
 }
 
 // Helper functions.

@@ -22,24 +22,16 @@ func newSecretsLayer(t *testing.T, client *forge.FakeClient, agents []AgentCrede
 	return layer, &buf
 }
 
-// fakePEM returns a PEM-like string for testing. The header is constructed
-// at runtime to avoid triggering the detect-private-key pre-commit hook.
-func fakePEM(body string) string {
-	header := "-----BEGIN RSA PRIVATE" + " KEY-----"
-	footer := "-----END RSA PRIVATE" + " KEY-----"
-	return header + "\n" + body + "\n" + footer
-}
-
 func twoAgents() []AgentCredentials {
 	return []AgentCredentials{
 		{
 			AgentEntry: config.AgentEntry{Role: "fullsend", Name: "FullsendBot", Slug: "fullsend-bot"},
-			PEM:        fakePEM("fullsend-key"),
+			PEM:        "-----BEGIN RSA PRIVATE KEY-----\nfullsend-key\n-----END RSA PRIVATE KEY-----",
 			AppID:      111,
 		},
 		{
 			AgentEntry: config.AgentEntry{Role: "triage", Name: "TriageBot", Slug: "triage-bot"},
-			PEM:        fakePEM("triage-key"),
+			PEM:        "-----BEGIN RSA PRIVATE KEY-----\ntriage-key\n-----END RSA PRIVATE KEY-----",
 			AppID:      222,
 		},
 	}
@@ -90,7 +82,7 @@ func TestSecretsLayer_Install_SkipsEmptyPEM(t *testing.T) {
 	agents := []AgentCredentials{
 		{
 			AgentEntry: config.AgentEntry{Role: "fullsend", Name: "FullsendBot", Slug: "fullsend-bot"},
-			PEM:        fakePEM("fullsend-key"),
+			PEM:        "-----BEGIN RSA PRIVATE KEY-----\nfullsend-key\n-----END RSA PRIVATE KEY-----",
 			AppID:      111,
 		},
 		{

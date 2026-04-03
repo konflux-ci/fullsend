@@ -1,0 +1,53 @@
+name: E2E Tests
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths: ['**/*.go', 'go.mod', 'go.sum', 'e2e/**']
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-halfsend
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Playwright system dependencies
+        run: npx playwright install-deps chromium
+
+      - name: Decode session
+        run: |
+          if [ -z "$E2E_GITHUB_SESSION_B64" ]; then
+            echo "::error::E2E_GITHUB_SESSION secret is not set"
+            exit 1
+          fi
+          SESSION_FILE="${RUNNER_TEMP}/github-session.json"
+          printf '%s' "$E2E_GITHUB_SESSION_B64" | base64 -d > "$SESSION_FILE"
+          echo "E2E_GITHUB_SESSION_FILE=${SESSION_FILE}" >> "$GITHUB_ENV"
+        env:
+          E2E_GITHUB_SESSION_B64: ${{ secrets.E2E_GITHUB_SESSION }}
+
+      - name: Run e2e tests
+        run: make e2e-test
+        env:
+          E2E_SCREENSHOT_DIR: ${{ runner.temp }}/e2e-screenshots
+
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: ${{ runner.temp }}/e2e-screenshots/
+          if-no-files-found: ignore
+          retention-days: 5
