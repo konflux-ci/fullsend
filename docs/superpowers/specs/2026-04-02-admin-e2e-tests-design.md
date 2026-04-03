@@ -24,8 +24,8 @@ lifecycle.
   Playwright-backed implementations rather than subprocess-orchestrating the CLI.
 - **Dedicated test org: `halfsend`.** A manually-created GitHub org with a bot
   user (`botsend`) that has admin access. The org name is hardcoded in tests.
-- **Persistent browser context for auth.** A one-time manual login saves
-  Playwright state. Test runs reuse this state without re-authenticating.
+- **Automated login via Playwright.** The test logs in programmatically at
+  startup using username/password credentials. No stored browser state needed.
 - **Dual cleanup strategy.** Teardown-first (delete stale resources before each
   run) combined with `t.Cleanup()` deferred cleanup (catch mid-test failures).
 - **App deletion via Playwright UI.** Cleanup deletes GitHub Apps by navigating
@@ -42,13 +42,11 @@ e2e/
   admin/
     admin_test.go        # TestAdminInstallUninstall
     browser.go           # PlaywrightBrowserOpener (appsetup.BrowserOpener)
+    login.go             # githubLogin() — automated GitHub login via Playwright
     prompter.go          # AutoPrompter (appsetup.Prompter)
     cleanup.go           # Teardown-first + deferred cleanup helpers
     lock.go              # Distributed lock via GitHub repo
     testutil.go          # Shared test helpers (env var loading, client setup)
-    cmd/
-      setup-auth/
-        main.go          # One-time interactive auth state bootstrap
 ```
 
 All files use `//go:build e2e` so they never compile during `go test ./...`.
@@ -58,11 +56,12 @@ All files use `//go:build e2e` so they never compile during `go test ./...`.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `E2E_GITHUB_TOKEN` | Yes | PAT for the `botsend` user with org admin, repo, delete_repo scopes |
-| `E2E_BROWSER_STATE_DIR` | Yes | Path to Playwright persistent browser context (pre-authenticated as botsend) |
+| `E2E_GITHUB_USERNAME` | Yes | GitHub username for the `botsend` user |
+| `E2E_GITHUB_PASSWORD` | Yes | GitHub password for the `botsend` user |
 | `E2E_LOCK_TIMEOUT` | No | How long to wait for the distributed lock (default: 30m) |
 
 The test org (`halfsend`) and bot user (`botsend`) are constants in the test
-code, not configurable.
+code, not configurable. The bot user must NOT have 2FA enabled.
 
 ## Function Access
 
@@ -213,8 +212,8 @@ Scan the `halfsend` org and delete stale resources from previous runs:
 ### Phase 2: Install
 
 1. Create a `github.LiveClient` using `E2E_GITHUB_TOKEN`.
-2. Initialize a Playwright browser from the persistent context at
-   `E2E_BROWSER_STATE_DIR`.
+2. Launch a Playwright Chromium browser and log in programmatically using
+   `E2E_GITHUB_USERNAME` and `E2E_GITHUB_PASSWORD`.
 3. Construct `appsetup.Setup` with:
    - `PlaywrightBrowserOpener` as the `BrowserOpener`
    - `AutoPrompter` as the `Prompter`
@@ -339,6 +338,7 @@ This is called both during teardown-first cleanup and via `t.Cleanup()`.
 name: E2E Tests
 on:
   push:
+    branches: [main]
     paths: ['**/*.go', 'go.mod', 'go.sum']
   pull_request:
     paths: ['**/*.go', 'go.mod', 'go.sum']
@@ -351,7 +351,7 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -359,15 +359,12 @@ jobs:
           go-version-file: go.mod
       - name: Install Playwright browsers
         run: go run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps chromium
-      - name: Restore browser auth state
-        run: echo "$E2E_BROWSER_STATE" | base64 -d | tar xz -C /tmp/pw-state
-        env:
-          E2E_BROWSER_STATE: ${{ secrets.E2E_BROWSER_STATE }}
       - name: Run e2e tests
-        run: go test -tags e2e -v -timeout 10m ./e2e/admin/
+        run: go test -tags e2e -v -timeout 15m ./e2e/admin/
         env:
           E2E_GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
-          E2E_BROWSER_STATE_DIR: /tmp/pw-state
+          E2E_GITHUB_USERNAME: ${{ secrets.E2E_GITHUB_USERNAME }}
+          E2E_GITHUB_PASSWORD: ${{ secrets.E2E_GITHUB_PASSWORD }}
 ```
 
 Key details:
@@ -376,25 +373,8 @@ Key details:
   developer runs.
 - `cancel-in-progress: false` lets running tests complete their cleanup rather
   than being killed mid-mutation.
-- Browser auth state is stored as a base64-encoded tarball in a repository
-  secret. This needs periodic refresh when the GitHub session expires.
-
-## Auth State Bootstrap
-
-A one-time setup tool at `e2e/admin/cmd/setup-auth/main.go`:
-
-1. Launches Playwright with a visible Chromium browser (headed mode).
-2. Navigates to `https://github.com/login`.
-3. Prints instructions: "Log in as botsend, then press Enter in the terminal."
-4. Waits for the developer to complete login (including 2FA if needed).
-5. Saves the browser storage state to the specified directory.
-6. Prints instructions for converting to a CI secret:
-   `tar czf - -C <dir> . | base64 > state.b64`
-
-Usage:
-```
-E2E_BROWSER_STATE_DIR=/tmp/pw-state go run ./e2e/admin/cmd/setup-auth/
-```
+- The test logs into GitHub programmatically at startup using username/password.
+  No stored browser state is needed. The bot user must not have 2FA enabled.
 
 ## Risks and Mitigations
 
@@ -402,7 +382,7 @@ E2E_BROWSER_STATE_DIR=/tmp/pw-state go run ./e2e/admin/cmd/setup-auth/
 |------|------------|
 | `playwright-go` immaturity | Fallback: shell out to Node.js Playwright script from Go test |
 | GitHub UI changes break selectors | Use data-testid or role-based selectors where possible; accept some fragility |
-| Browser auth state expires | Document refresh process; CI job can alert on auth failures |
+| GitHub login page changes | Login selectors (`#login_field`, `#password`) are stable; test fails clearly if they change |
 | Rate limiting on GitHub API | Single test run with cleanup; concurrency group prevents parallel runs |
 | Test leaves orphaned resources | Dual cleanup (teardown-first + t.Cleanup) catches most cases; manual cleanup documented |
 | Flaky network/API responses | Retry logic for API calls; generous timeouts; test marked as flaky-tolerant in CI |

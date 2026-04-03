@@ -38,14 +38,23 @@ func TestAdminInstallUninstall(t *testing.T) {
 		}
 	})
 
-	browser, err := pw.Chromium.LaunchPersistentContext(cfg.browserStateDir, playwright.BrowserTypeLaunchPersistentContextOptions{
+	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(os.Getenv("E2E_HEADED") != "true"),
 	})
 	require.NoError(t, err, "launching Playwright browser")
 	t.Cleanup(func() { _ = browser.Close() })
 
-	page, err := browser.NewPage()
+	browserCtx, err := browser.NewContext()
+	require.NoError(t, err, "creating browser context")
+	t.Cleanup(func() { _ = browserCtx.Close() })
+
+	page, err := browserCtx.NewPage()
 	require.NoError(t, err, "creating Playwright page")
+
+	// Log into GitHub programmatically.
+	t.Log("Logging into GitHub...")
+	err = githubLogin(page, cfg.username, cfg.password)
+	require.NoError(t, err, "logging into GitHub")
 
 	// --- GitHub client ---
 	client := newLiveClient(cfg.token)

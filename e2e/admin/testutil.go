@@ -41,9 +41,10 @@ var defaultRoles = []string{"fullsend", "triage", "coder", "review"}
 
 // envConfig holds required environment configuration.
 type envConfig struct {
-	token           string
-	browserStateDir string
-	lockTimeout     time.Duration
+	token       string
+	username    string
+	password    string
+	lockTimeout time.Duration
 }
 
 // loadEnvConfig reads and validates required env vars. Calls t.Skip if
@@ -57,9 +58,14 @@ func loadEnvConfig(t *testing.T) envConfig {
 		t.Skip("E2E_GITHUB_TOKEN not set, skipping e2e test")
 	}
 
-	browserStateDir := os.Getenv("E2E_BROWSER_STATE_DIR")
-	if browserStateDir == "" {
-		t.Skip("E2E_BROWSER_STATE_DIR not set, skipping e2e test")
+	username := os.Getenv("E2E_GITHUB_USERNAME")
+	if username == "" {
+		t.Skip("E2E_GITHUB_USERNAME not set, skipping e2e test")
+	}
+
+	password := os.Getenv("E2E_GITHUB_PASSWORD")
+	if password == "" {
+		t.Skip("E2E_GITHUB_PASSWORD not set, skipping e2e test")
 	}
 
 	lockTimeout := defaultLockTimeout
@@ -72,9 +78,10 @@ func loadEnvConfig(t *testing.T) envConfig {
 	}
 
 	return envConfig{
-		token:           token,
-		browserStateDir: browserStateDir,
-		lockTimeout:     lockTimeout,
+		token:       token,
+		username:    username,
+		password:    password,
+		lockTimeout: lockTimeout,
 	}
 }
 
