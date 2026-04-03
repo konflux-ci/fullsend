@@ -10,6 +10,8 @@ Fullsend is a living design document exploring fully autonomous agentic developm
 - The security threat model (threat priority: external injection > insider > drift > supply chain) should inform all other documents.
 - Keep core problem documents organization-agnostic. Organization-specific details belong in `docs/problems/applied/<org-name>/`.
 - The target audience is any contributor community considering autonomous agents — keep language accessible, avoid presuming solutions.
+- Always run `pre-commit run --files <changed-files>` before submitting changes and fix any failures.
+- Never commit secrets (tokens, API keys, PEM keys, gcloud credentials) or sensitive data (GCP project names, service account identifiers, Model Armor template names, internal hostnames). Use environment variables with no defaults for sensitive values.
 
 ## Key design decisions made
 
