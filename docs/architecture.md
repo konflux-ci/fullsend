@@ -2,6 +2,13 @@
 
 What are the components of the agent execution stack?
 
+> **This is a living document.** It must always reflect the current state of
+> architectural decisions. When an ADR is accepted (or superseded), this
+> document is updated to match. ADRs are point-in-time records and are not
+> modified after acceptance; this document is where the *current* truth lives.
+> A reader should be able to understand the system's architecture from this
+> document alone, without tracing a chain of ADRs.
+
 This document names the parts of the system without deciding how they work. It establishes shared vocabulary that the [problem documents](problems/) can reference when discussing design choices. Each component gets a responsibility statement and open questions — implementation decisions live in the problem docs and will crystallize into [ADRs](ADRs/) as they mature.
 
 This is not exhaustive. Not every problem doc maps to a component here, and not every component here has a corresponding problem doc yet.
