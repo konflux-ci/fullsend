@@ -68,6 +68,8 @@ The system that gives agents credentials to act on external services. Responsibl
 
 Identity is not the same as trust. An agent's identity lets it authenticate to external services; the trust model is defined by repository permissions and CODEOWNERS, not by which credentials the agent holds. (See [agent-architecture.md](problems/agent-architecture.md) — "trust derives from repository permissions, not agent identity.")
 
+One concrete implementation option is [`oidcx`](https://github.com/oxidecomputer/oidcx): a service that accepts OIDC identity tokens and exchanges them for short-lived access tokens. It can mint tokens scoped to selected GitHub repositories and permissions, or to selected Oxide silos and permissions, and it also ships with a GitHub Action wrapper. In a Fullsend deployment, this can be used by the sandbox entrypoint to narrow a broad GitHub App identity down to only the specific permissions an agent needs for the current run.
+
 **Open questions:**
 
 - What identity model fits best — separate bot accounts per agent role, a single bot account with role metadata, GitHub App installations, or something else? (See [agent-architecture.md](problems/agent-architecture.md).)
