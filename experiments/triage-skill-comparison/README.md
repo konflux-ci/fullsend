@@ -120,10 +120,13 @@ An independent judge agent scores each triage on five weighted criteria:
 ### Quick start
 
 ```bash
-# Full experiment: 3 scenarios x 5 strategies = 15 trials
+# Full experiment: 3 scenarios x 5 strategies x 5 trials = 75 runs
 ./scripts/run-experiment.sh
 
-# Single trial
+# Fewer repetitions for faster iteration
+./scripts/run-experiment.sh --trials 2
+
+# Single cell
 ./scripts/run-experiment.sh --scenario crash-on-save --strategy omc-deep-interview
 
 # Use OpenCode instead of Claude
@@ -138,29 +141,76 @@ An independent judge agent scores each triage on five weighted criteria:
 
 ### Output structure
 
+Each scenario x strategy cell runs N independent trials (default 5). The summarizer aggregates scores as mean +/- stddev across trials.
+
 ```
 results/<timestamp>/
   seed-app/              # Generated TaskFlow app (optional)
   crash-on-save/
     superpowers-brainstorming/
-      conversation.json  # Full issue + comments
-      triage-summary.md  # Final triage output
-      triage-summary.json
-      judge-assessment.json
+      trial-1/
+        conversation.json  # Full issue + comments
+        conversation.md    # Human-readable conversation
+        triage-summary.md  # Final triage output
+        triage-summary.json
+        judge-assessment.json
+      trial-2/
+        ...
+      trial-N/
+        ...
     omc-deep-interview/
       ...
-    omo-prometheus/
-      ...
-    structured-triage/
-      ...
-    socratic-refinement/
-      ...
+    scenario-analysis.json # Cross-strategy comparison
   slow-search/
     ...
   auth-redirect-loop/
     ...
   summary.md             # Comparison table with rankings
 ```
+
+## Results (10 trials per cell, 2026-04-06)
+
+Full results: [`results/20260406T154300Z/summary.md`](results/20260406T154300Z/summary.md)
+
+### Strategy rankings
+
+| Rank | Strategy | Mean Score | Consistency (avg stddev) |
+|---|---|---|---|
+| 1 | omo-prometheus | 4.08 | moderate (0.50) |
+| 2 | omc-deep-interview | 4.04 | low (0.63) |
+| 3 | socratic-refinement | 3.74 | moderate (0.45) |
+| 4 | structured-triage | 3.49 | low (0.63) |
+| 5 | superpowers-brainstorming | 3.45 | moderate (0.51) |
+
+### Key findings
+
+1. **The top two strategies are statistically indistinguishable.** omo-prometheus (4.08) and omc-deep-interview (4.04) are within noise of each other. Both outperform the baselines, but neither dominates.
+
+2. **Consistency matters as much as mean score.** omc-deep-interview and structured-triage both show high variance (stddev >1.2 on crash-on-save), meaning they occasionally produce excellent results but also fail badly — including JSON parse failures that zero out the triage summary. A strategy that scores 3.5 reliably may be preferable to one that scores 4.0 on average but sometimes produces 1.85.
+
+3. **All strategies struggle with multi-causal bugs.** On auth-redirect-loop (two interacting root causes: SameSite cookie + email claim mismatch), every strategy averaged below 3.6. Most resolved after a single exchange, consistently missing the primary root cause (SameSite=Strict). This is the hardest scenario and the one most representative of real-world triage.
+
+4. **Premature resolution is the dominant failure mode.** Across all strategies and scenarios, agents overwhelmingly resolve after 1 turn. The single-turn strategies (socratic-refinement, superpowers-brainstorming) are especially prone, but even multi-turn strategies often stop early. The current prompt framing may be biasing agents toward closure.
+
+5. **Easy scenarios flatten differences.** On slow-search, four of five strategies scored above 4.3. The scenario is "easy" — a single root cause with clear diagnostic signals — and doesn't discriminate well between strategies.
+
+6. **Question quality is universally high.** Even low-scoring trials tend to have good questions (4/5). The problem is rarely *what* agents ask — it's that they don't ask *enough* before resolving.
+
+### Recommendations for Story 3 (issue #126)
+
+Based on these results, here is what we think should inform the triage agent design:
+
+1. **Don't pick a single strategy — use a hybrid.** The phased interview structure from omo-prometheus and the ambiguity gating from omc-deep-interview both contribute value. A production triage agent should combine a phased approach (scope → investigate → hypothesize → resolve) with an explicit "am I confident enough to close?" gate that prevents premature resolution.
+
+2. **Add a resolution threshold.** The biggest lever for improvement is not question quality — it's preventing premature closure. The triage agent should be required to meet a minimum confidence or information coverage threshold before it can resolve. The omc-deep-interview approach of scoring clarity dimensions is a good starting point, though its mathematical framing didn't reliably prevent early closure in practice.
+
+3. **Design for 2-3 turns, not 1.** Most value comes from the second question. Agents that used 2 turns consistently outscored those that used 1. The system prompt or strategy should encourage at least one follow-up before resolution, unless the issue is unambiguous. A simple heuristic: if the agent's own triage summary lists information gaps, it should not resolve.
+
+4. **Test with multi-causal scenarios.** The auth-redirect-loop scenario exposed weaknesses that the other two didn't. Real production bugs often have interacting causes. The triage agent's test suite should include scenarios where the obvious first hypothesis is incomplete.
+
+5. **Address the JSON parse failure mode.** Several trials (especially omc-deep-interview and structured-triage) failed because the agent produced unparseable output, resulting in scores of ~2.0. The production agent needs robust output parsing and should fall back gracefully rather than losing all gathered information.
+
+6. **The experiment framework itself is ready for reuse.** The file-based simulation, multi-trial aggregation, and judge scoring rubric can be used to evaluate the production triage agent as it develops. Run the same scenarios against the real implementation to track progress.
 
 ## Design decisions
 
@@ -225,8 +275,10 @@ A webhook-triggered workflow could replace the polling loop, starting a new tria
 | `prompts/reporter-system.md` | Reporter agent prompt |
 | `prompts/judge-system.md` | Judge agent scoring rubric |
 | `prompts/seed-app.md` | Prompt to generate the fictional TaskFlow app |
+| `prompts/scenario-analysis-system.md` | Cross-strategy analysis prompt |
 | `scripts/run-experiment.sh` | Main orchestrator |
 | `scripts/run-single-trial.sh` | Single scenario x strategy dialogue loop |
 | `scripts/judge.sh` | Judge agent invocation |
-| `scripts/summarize.sh` | Summary table generator |
+| `scripts/analyze-scenario.sh` | Cross-strategy scenario analysis |
+| `scripts/summarize.sh` | Summary table generator (multi-trial aggregation) |
 | `scripts/github-adapter.sh` | Live GitHub issue adapter |
