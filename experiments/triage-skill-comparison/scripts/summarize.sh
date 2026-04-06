@@ -104,6 +104,33 @@ fi
     echo "### Scenario: $scenario"
     echo ""
 
+    # Render cross-strategy analysis if available
+    analysis_file="$RESULTS_DIR/$scenario/scenario-analysis.json"
+    if [[ -f "$analysis_file" ]]; then
+      patterns_count="$(jq -r '.common_patterns | length' "$analysis_file")"
+      standouts_count="$(jq -r '.standout_items | length' "$analysis_file")"
+
+      if [[ "$patterns_count" -gt 0 ]] || [[ "$standouts_count" -gt 0 ]]; then
+        echo "#### Cross-Strategy Analysis"
+        echo ""
+
+        if [[ "$patterns_count" -gt 0 ]]; then
+          echo "**Common patterns:**"
+          jq -r '.common_patterns[] | "- " + .' "$analysis_file"
+          echo ""
+        fi
+
+        if [[ "$standouts_count" -gt 0 ]]; then
+          echo "**Standout items:**"
+          jq -r '.standout_items[] | "- " + .' "$analysis_file"
+          echo ""
+        fi
+
+        echo "---"
+        echo ""
+      fi
+    fi
+
     for strategy in "${STRATEGIES[@]}"; do
       assessment="$RESULTS_DIR/$scenario/$strategy/judge-assessment.json"
       [[ -f "$assessment" ]] || continue

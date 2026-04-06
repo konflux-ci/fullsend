@@ -301,6 +301,24 @@ fi
 
 if ! $DRY_RUN; then
   echo "$ISSUE_JSON" | jq . > "$TRIAL_DIR/conversation.json"
+
+  # Generate human-readable conversation markdown
+  {
+    echo "# Conversation: $SCENARIO_NAME x $STRATEGY_NAME"
+    echo ""
+    echo "## Issue"
+    echo ""
+    echo "**$(echo "$ISSUE_JSON" | jq -r '.title')**"
+    echo ""
+    echo "$ISSUE_JSON" | jq -r '.body'
+    echo ""
+    echo "---"
+    echo ""
+    echo "## Comments"
+    echo ""
+    echo "$ISSUE_JSON" | jq -r '.comments[] | "### " + .author + "\n\n" + .body + "\n\n---\n"'
+  } > "$TRIAL_DIR/conversation.md"
+
   COMMENT_COUNT="$(echo "$ISSUE_JSON" | jq '.comments | length')"
   echo "  Done: $TURN turns, $COMMENT_COUNT comments -> $TRIAL_DIR/"
 fi

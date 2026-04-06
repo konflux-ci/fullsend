@@ -144,6 +144,18 @@ if [[ -z "$DRY_RUN" ]]; then
     done
   done
   echo ""
+
+  # ---- Phase 3.5: Cross-strategy scenario analysis ----
+  echo "Phase 3.5: Analyzing scenarios across strategies..."
+  echo ""
+
+  for scenario in "${SCENARIOS[@]}"; do
+    if ls "$RESULTS_DIR/$scenario"/*/judge-assessment.json &>/dev/null; then
+      echo "  Analyzing: $scenario"
+      "$SCRIPT_DIR/analyze-scenario.sh" "$scenario" "$RESULTS_DIR" "$AGENT_CLI"
+    fi
+  done
+  echo ""
 fi
 
 # ---------------------------------------------------------------------------
