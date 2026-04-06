@@ -9,6 +9,7 @@
 # Options:
 #   --scenario NAME    Run only this scenario (default: all)
 #   --strategy NAME    Run only this strategy (default: all)
+#   --trials N         Repetitions per scenario x strategy (default: 5)
 #   --max-turns N      Max dialogue turns per trial (default: 6)
 #   --agent COMMAND    Agent CLI to use: "claude" or "opencode" (default: claude)
 #   --dry-run          Print prompts without invoking agents
@@ -23,6 +24,7 @@ EXPERIMENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Defaults
 SCENARIOS=(crash-on-save slow-search auth-redirect-loop)
 STRATEGIES=(superpowers-brainstorming structured-triage socratic-refinement omc-deep-interview omo-prometheus)
+NUM_TRIALS=5
 MAX_TURNS=6
 AGENT_CLI=claude
 DRY_RUN=""
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --scenario)   FILTER_SCENARIO="$2"; shift 2 ;;
     --strategy)   FILTER_STRATEGY="$2"; shift 2 ;;
+    --trials)     NUM_TRIALS="$2"; shift 2 ;;
     --max-turns)  MAX_TURNS="$2"; shift 2 ;;
     --agent)      AGENT_CLI="$2"; shift 2 ;;
     --dry-run)    DRY_RUN="--dry-run"; shift ;;
@@ -65,7 +68,8 @@ TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RESULTS_DIR="$EXPERIMENT_DIR/results/$TIMESTAMP"
 mkdir -p "$RESULTS_DIR"
 
-TOTAL=$((${#SCENARIOS[@]} * ${#STRATEGIES[@]}))
+CELLS=$((${#SCENARIOS[@]} * ${#STRATEGIES[@]}))
+TOTAL=$((CELLS * NUM_TRIALS))
 CURRENT=0
 
 echo "=============================================="
@@ -74,9 +78,10 @@ echo "=============================================="
 echo "Agent:      $AGENT_CLI"
 echo "Scenarios:  ${SCENARIOS[*]}"
 echo "Strategies: ${STRATEGIES[*]}"
+echo "Trials/cell: $NUM_TRIALS"
 echo "Max turns:  $MAX_TURNS"
 echo "Results:    $RESULTS_DIR"
-echo "Trials:     $TOTAL"
+echo "Total runs: $TOTAL ($CELLS cells x $NUM_TRIALS trials)"
 echo "=============================================="
 echo ""
 
@@ -115,14 +120,16 @@ echo ""
 
 for scenario in "${SCENARIOS[@]}"; do
   for strategy in "${STRATEGIES[@]}"; do
-    CURRENT=$((CURRENT + 1))
-    TRIAL_DIR="$RESULTS_DIR/$scenario/$strategy"
-    mkdir -p "$TRIAL_DIR"
+    for trial_num in $(seq 1 "$NUM_TRIALS"); do
+      CURRENT=$((CURRENT + 1))
+      TRIAL_DIR="$RESULTS_DIR/$scenario/$strategy/trial-$trial_num"
+      mkdir -p "$TRIAL_DIR"
 
-    echo "[$CURRENT/$TOTAL] $scenario x $strategy"
-    "$SCRIPT_DIR/run-single-trial.sh" \
-      "$scenario" "$strategy" "$TRIAL_DIR" "$MAX_TURNS" "$AGENT_CLI" $DRY_RUN
-    echo ""
+      echo "[$CURRENT/$TOTAL] $scenario x $strategy (trial $trial_num/$NUM_TRIALS)"
+      "$SCRIPT_DIR/run-single-trial.sh" \
+        "$scenario" "$strategy" "$TRIAL_DIR" "$MAX_TURNS" "$AGENT_CLI" $DRY_RUN
+      echo ""
+    done
   done
 done
 
@@ -136,11 +143,13 @@ if [[ -z "$DRY_RUN" ]]; then
 
   for scenario in "${SCENARIOS[@]}"; do
     for strategy in "${STRATEGIES[@]}"; do
-      TRIAL_DIR="$RESULTS_DIR/$scenario/$strategy"
-      if [[ -f "$TRIAL_DIR/conversation.json" ]]; then
-        echo "  Judging: $scenario x $strategy"
-        "$SCRIPT_DIR/judge.sh" "$scenario" "$TRIAL_DIR" "$AGENT_CLI"
-      fi
+      for trial_num in $(seq 1 "$NUM_TRIALS"); do
+        TRIAL_DIR="$RESULTS_DIR/$scenario/$strategy/trial-$trial_num"
+        if [[ -f "$TRIAL_DIR/conversation.json" ]]; then
+          echo "  Judging: $scenario x $strategy (trial $trial_num)"
+          "$SCRIPT_DIR/judge.sh" "$scenario" "$TRIAL_DIR" "$AGENT_CLI"
+        fi
+      done
     done
   done
   echo ""
@@ -150,7 +159,7 @@ if [[ -z "$DRY_RUN" ]]; then
   echo ""
 
   for scenario in "${SCENARIOS[@]}"; do
-    if ls "$RESULTS_DIR/$scenario"/*/judge-assessment.json &>/dev/null; then
+    if ls "$RESULTS_DIR/$scenario"/*/trial-*/judge-assessment.json &>/dev/null; then
       echo "  Analyzing: $scenario"
       "$SCRIPT_DIR/analyze-scenario.sh" "$scenario" "$RESULTS_DIR" "$AGENT_CLI"
     fi

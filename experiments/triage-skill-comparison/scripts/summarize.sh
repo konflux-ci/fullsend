@@ -3,6 +3,9 @@
 # summarize.sh — Generates the final comparison table from judge assessments
 # =============================================================================
 #
+# Aggregates multiple trials per scenario x strategy cell, reporting mean and
+# standard deviation of weighted_total scores.
+#
 # Usage:
 #   summarize.sh RESULTS_DIR
 # =============================================================================
@@ -12,21 +15,26 @@ set -euo pipefail
 RESULTS_DIR="${1:?Usage: $0 RESULTS_DIR}"
 SUMMARY_FILE="$RESULTS_DIR/summary.md"
 
+# ---------------------------------------------------------------------------
 # Collect all judge assessments
-declare -A SCORES
+# ---------------------------------------------------------------------------
+# Path: results/<timestamp>/<scenario>/<strategy>/trial-N/judge-assessment.json
+# (also supports legacy flat layout without trial-N/)
+
+declare -A CELL_SCORES  # key: scenario__strategy, value: space-separated scores
 STRATEGIES=()
 SCENARIOS=()
 
-for assessment in "$RESULTS_DIR"/*/judge-assessment.json "$RESULTS_DIR"/*/*/judge-assessment.json; do
+for assessment in "$RESULTS_DIR"/*/*/trial-*/judge-assessment.json "$RESULTS_DIR"/*/*/judge-assessment.json; do
   [[ -f "$assessment" ]] || continue
 
-  # Extract scenario and strategy from path
-  # Path: results/<timestamp>/<scenario>/<strategy>/judge-assessment.json
   rel="$(realpath --relative-to="$RESULTS_DIR" "$assessment")"
   scenario="$(echo "$rel" | cut -d/ -f1)"
   strategy="$(echo "$rel" | cut -d/ -f2)"
 
-  # Track unique scenarios and strategies
+  # Skip the scenario-analysis.json which lives at scenario level
+  [[ "$strategy" == "scenario-analysis.json" ]] && continue
+
   if [[ ! " ${SCENARIOS[*]:-} " =~ " $scenario " ]]; then
     SCENARIOS+=("$scenario")
   fi
@@ -34,7 +42,9 @@ for assessment in "$RESULTS_DIR"/*/judge-assessment.json "$RESULTS_DIR"/*/*/judg
     STRATEGIES+=("$strategy")
   fi
 
-  SCORES["${scenario}__${strategy}"]="$(jq -r '.weighted_total // 0' "$assessment")"
+  score="$(jq -r '.weighted_total // 0' "$assessment")"
+  key="${scenario}__${strategy}"
+  CELL_SCORES["$key"]="${CELL_SCORES["$key"]:-} $score"
 done
 
 if [[ ${#SCENARIOS[@]} -eq 0 ]] || [[ ${#STRATEGIES[@]} -eq 0 ]]; then
@@ -44,6 +54,23 @@ if [[ ${#SCENARIOS[@]} -eq 0 ]] || [[ ${#STRATEGIES[@]} -eq 0 ]]; then
   echo "No results to summarize." >> "$SUMMARY_FILE"
   exit 0
 fi
+
+# ---------------------------------------------------------------------------
+# Helper: compute mean and stddev from space-separated scores
+# ---------------------------------------------------------------------------
+
+calc_stats() {
+  local scores="$1"
+  # Returns: mean stddev n
+  echo "$scores" | awk '{
+    n = NF; sum = 0; sumsq = 0
+    for (i = 1; i <= NF; i++) { sum += $i; sumsq += $i * $i }
+    mean = sum / n
+    if (n > 1) { var = (sumsq - n * mean * mean) / (n - 1); std = sqrt(var > 0 ? var : 0) }
+    else { std = 0 }
+    printf "%.2f %.2f %d", mean, std, n
+  }'
+}
 
 # ---------------------------------------------------------------------------
 # Generate markdown summary
@@ -57,6 +84,8 @@ fi
 
   # ---- Overall scores table ----
   echo "## Scores by Strategy x Scenario"
+  echo ""
+  echo "Each cell shows **mean +/- stddev** over N trials."
   echo ""
 
   # Header
@@ -74,24 +103,28 @@ fi
   printf '%s\n' "---|"
 
   # Rows
+  declare -A STRATEGY_MEANS
   for strategy in "${STRATEGIES[@]}"; do
     printf "| %s |" "$strategy"
-    total=0
-    count=0
+    all_means=""
     for scenario in "${SCENARIOS[@]}"; do
-      score="${SCORES["${scenario}__${strategy}"]:-N/A}"
-      printf " %s |" "$score"
-      if [[ "$score" != "N/A" ]]; then
-        total="$(echo "$total + $score" | bc)"
-        count=$((count + 1))
+      key="${scenario}__${strategy}"
+      scores="${CELL_SCORES["$key"]:-}"
+      if [[ -n "$scores" ]]; then
+        read -r mean std n <<< "$(calc_stats "$scores")"
+        printf " %s +/- %s (n=%s) |" "$mean" "$std" "$n"
+        all_means="$all_means $mean"
+      else
+        printf " N/A |"
       fi
     done
-    if [[ $count -gt 0 ]]; then
-      avg="$(echo "scale=2; $total / $count" | bc)"
+    if [[ -n "$all_means" ]]; then
+      grand_mean="$(echo "$all_means" | awk '{ sum=0; for(i=1;i<=NF;i++) sum+=$i; printf "%.2f", sum/NF }')"
     else
-      avg="N/A"
+      grand_mean="N/A"
     fi
-    printf " **%s** |\n" "$avg"
+    STRATEGY_MEANS["$strategy"]="$grand_mean"
+    printf " **%s** |\n" "$grand_mean"
   done
 
   echo ""
@@ -132,67 +165,76 @@ fi
     fi
 
     for strategy in "${STRATEGIES[@]}"; do
-      assessment="$RESULTS_DIR/$scenario/$strategy/judge-assessment.json"
-      [[ -f "$assessment" ]] || continue
+      key="${scenario}__${strategy}"
+      scores="${CELL_SCORES["$key"]:-}"
+      [[ -n "$scores" ]] || continue
 
       echo "#### Strategy: $strategy"
       echo ""
-      echo "**Weighted total:** $(jq -r '.weighted_total // "N/A"' "$assessment")/5.00"
+
+      read -r mean std n <<< "$(calc_stats "$scores")"
+      echo "**Weighted total (mean):** $mean +/- $std over $n trials"
       echo ""
 
-      # Score breakdown
-      echo "| Criterion | Score | Rationale |"
+      # Show per-trial scores
+      echo "| Trial | Score | Turns |"
       echo "|---|---|---|"
-      for criterion in completeness accuracy efficiency question_quality actionability; do
-        s="$(jq -r ".scores.${criterion}.score // \"N/A\"" "$assessment")"
-        r="$(jq -r ".scores.${criterion}.rationale // \"\"" "$assessment" | tr '\n' ' ' | head -c 120)"
-        echo "| $criterion | $s | $r |"
+      trial_idx=0
+      for assessment in "$RESULTS_DIR/$scenario/$strategy"/trial-*/judge-assessment.json "$RESULTS_DIR/$scenario/$strategy/judge-assessment.json"; do
+        [[ -f "$assessment" ]] || continue
+        trial_idx=$((trial_idx + 1))
+        t_score="$(jq -r '.weighted_total // "N/A"' "$assessment")"
+        t_turns="$(jq -r '.turn_count // "?"' "$assessment")"
+        echo "| $trial_idx | $t_score | $t_turns |"
       done
       echo ""
 
-      # Qualitative notes
-      echo "**Strengths:**"
-      jq -r '.notable_strengths // [] | .[] | "- " + .' "$assessment" 2>/dev/null || true
-      echo ""
-      echo "**Weaknesses:**"
-      jq -r '.notable_weaknesses // [] | .[] | "- " + .' "$assessment" 2>/dev/null || true
-      echo ""
-      echo "**Most insightful question:** $(jq -r '.most_insightful_question // "N/A"' "$assessment")"
-      echo ""
+      # Show rubric breakdown for the first trial as a representative example
+      first_assessment=""
+      for a in "$RESULTS_DIR/$scenario/$strategy"/trial-*/judge-assessment.json "$RESULTS_DIR/$scenario/$strategy/judge-assessment.json"; do
+        if [[ -f "$a" ]]; then first_assessment="$a"; break; fi
+      done
+
+      if [[ -n "$first_assessment" ]]; then
+        echo "<details>"
+        echo "<summary>Rubric breakdown (trial 1)</summary>"
+        echo ""
+        echo "| Criterion | Score | Rationale |"
+        echo "|---|---|---|"
+        for criterion in completeness accuracy efficiency question_quality actionability; do
+          s="$(jq -r ".scores.${criterion}.score // \"N/A\"" "$first_assessment")"
+          r="$(jq -r ".scores.${criterion}.rationale // \"\"" "$first_assessment" | tr '\n' ' ' | head -c 120)"
+          echo "| $criterion | $s | $r |"
+        done
+        echo ""
+
+        echo "**Strengths:**"
+        jq -r '.notable_strengths // [] | .[] | "- " + .' "$first_assessment" 2>/dev/null || true
+        echo ""
+        echo "**Weaknesses:**"
+        jq -r '.notable_weaknesses // [] | .[] | "- " + .' "$first_assessment" 2>/dev/null || true
+        echo ""
+        echo "**Most insightful question:** $(jq -r '.most_insightful_question // "N/A"' "$first_assessment")"
+        echo ""
+        echo "</details>"
+        echo ""
+      fi
+
       echo "---"
       echo ""
     done
   done
 
   # ---- Strategy rankings ----
-  echo "## Strategy Rankings (by average score)"
+  echo "## Strategy Rankings (by mean score across scenarios)"
   echo ""
-  echo "| Rank | Strategy | Average Score |"
+  echo "| Rank | Strategy | Mean Score |"
   echo "|---|---|---|"
 
-  # Calculate averages and sort
-  declare -A AVERAGES
-  for strategy in "${STRATEGIES[@]}"; do
-    total=0
-    count=0
-    for scenario in "${SCENARIOS[@]}"; do
-      score="${SCORES["${scenario}__${strategy}"]:-}"
-      if [[ -n "$score" && "$score" != "N/A" ]]; then
-        total="$(echo "$total + $score" | bc)"
-        count=$((count + 1))
-      fi
-    done
-    if [[ $count -gt 0 ]]; then
-      AVERAGES["$strategy"]="$(echo "scale=2; $total / $count" | bc)"
-    else
-      AVERAGES["$strategy"]="0"
-    fi
-  done
-
-  # Sort by average (descending)
+  # Sort by mean (descending)
   rank=1
-  for strategy in $(for s in "${STRATEGIES[@]}"; do echo "$s ${AVERAGES[$s]}"; done | sort -k2 -rn | awk '{print $1}'); do
-    echo "| $rank | $strategy | ${AVERAGES[$strategy]} |"
+  for strategy in $(for s in "${STRATEGIES[@]}"; do echo "$s ${STRATEGY_MEANS[$s]}"; done | sort -k2 -rn | awk '{print $1}'); do
+    echo "| $rank | $strategy | ${STRATEGY_MEANS[$strategy]} |"
     rank=$((rank + 1))
   done
 
@@ -202,6 +244,8 @@ fi
   echo "- **Scores are 1-5** where 3 = adequate, 4 = good, 5 = excellent"
   echo "- **Weighted total** combines: completeness (25%), accuracy (25%),"
   echo "  efficiency (20%), question quality (15%), actionability (15%)"
+  echo "- **Mean +/- stddev** shows the average and variation across repeated trials"
+  echo "- High stddev indicates the strategy behaves inconsistently"
   echo "- **Question quality** measures insightfulness — did the triage agent"
   echo "  ask questions that a human triager would be impressed by?"
   echo "- **Efficiency** penalizes wasted turns and rewards early resolution"

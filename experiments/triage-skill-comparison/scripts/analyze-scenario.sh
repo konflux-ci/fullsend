@@ -26,19 +26,24 @@ SCENARIO_JSON="$(cat "$SCENARIO_FILE")"
 GROUND_TRUTH="$(echo "$SCENARIO_JSON" | jq '.ground_truth')"
 EXPECTED_EXTRACTS="$(echo "$SCENARIO_JSON" | jq '.expected_triage_extracts')"
 
-# Collect all judge assessments for this scenario
+# Collect all judge assessments for this scenario (across all trials)
 ASSESSMENTS=""
 for strategy_dir in "$RESULTS_DIR/$SCENARIO_NAME"/*/; do
   [[ -d "$strategy_dir" ]] || continue
-  assessment="$strategy_dir/judge-assessment.json"
-  [[ -f "$assessment" ]] || continue
-
   strategy="$(basename "$strategy_dir")"
-  ASSESSMENTS+="
---- STRATEGY: $strategy ---
+
+  for trial_dir in "$strategy_dir"trial-*/; do
+    [[ -d "$trial_dir" ]] || continue
+    assessment="$trial_dir/judge-assessment.json"
+    [[ -f "$assessment" ]] || continue
+
+    trial="$(basename "$trial_dir")"
+    ASSESSMENTS+="
+--- STRATEGY: $strategy ($trial) ---
 
 $(cat "$assessment")
 "
+  done
 done
 
 if [[ -z "$ASSESSMENTS" ]]; then
