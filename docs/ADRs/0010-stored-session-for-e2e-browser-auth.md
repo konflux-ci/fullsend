@@ -59,6 +59,36 @@ session into the e2e test's browser context, bypassing the login form entirely.
 4. The browser context starts already authenticated -- no login form interaction
    needed.
 
+**Why both a stored session AND a password are required in CI:**
+
+GitHub has two distinct authentication gates in the browser, and they behave
+differently from datacenter IPs:
+
+1. **Login** (`/login`) -- the initial authentication form. GitHub blocks
+   password-based login from Actions runner IPs (Azure datacenter ranges),
+   rejecting correct credentials with "Incorrect username or password". The
+   stored session bypasses this entirely.
+
+2. **Sudo** (`/sessions/sudo`, titled "Confirm access") -- a re-authentication
+   prompt that GitHub presents when an already-authenticated session accesses
+   sensitive pages like `/settings/tokens/new` or
+   `/settings/personal-access-tokens/new`. Unlike login, sudo confirmation
+   *does* accept passwords from datacenter IPs. This makes sense: sudo is
+   verifying the identity of an already-authenticated session, not performing
+   initial authentication, so it is not subject to the same anti-credential-
+   stuffing protections.
+
+The e2e tests need both because:
+
+- The **session** gets past login (which blocks passwords from CI).
+- The **password** gets past sudo (which the session alone cannot satisfy,
+  since sudo confirmation expires in ~2 hours and cannot be meaningfully
+  baked into the stored session).
+
+The `handleSudoIfPresent()` function detects the "Confirm access" page by
+title and enters the password automatically. It is called before PAT creation
+(both classic and fine-grained).
+
 **Local development:** When `E2E_GITHUB_SESSION_FILE` is not set but
 `E2E_GITHUB_USERNAME` and `E2E_GITHUB_PASSWORD` are, `make e2e-test`
 automatically generates a session file by logging in via Playwright. This
@@ -99,11 +129,12 @@ it does expire, a developer runs `make e2e-upload-session` to refresh it.
 
 ## Consequences
 
-- The `E2E_GITHUB_PASSWORD` secret is no longer needed for browser login. The
-  base64 decode step and password-related debug instrumentation can be removed.
-- A new `E2E_GITHUB_SESSION` secret holds the base64-encoded storageState JSON.
+- Two repo secrets are required in CI: `E2E_GITHUB_SESSION` (base64-encoded
+  storageState JSON for login bypass) and `E2E_GITHUB_PASSWORD` (for sudo
+  confirmation on sensitive pages).
 - If the test account's password changes, the stored session must be
-  re-exported (password change invalidates all sessions).
+  re-exported (password change invalidates all sessions) and the
+  `E2E_GITHUB_PASSWORD` secret must be updated.
 - If the test account enables 2FA, the session export must happen after the 2FA
   step.
 - The login function becomes a session-loading function -- simpler and more
