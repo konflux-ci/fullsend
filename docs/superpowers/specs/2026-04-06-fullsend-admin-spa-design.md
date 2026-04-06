@@ -1,6 +1,6 @@
 # Design: Fullsend admin installation SPA (static, GitHub App–centric)
 
-Date: 2026-04-06  
+Date: 2026-04-06
 Status: Draft (brainstorm consolidated)
 
 ## Context
@@ -147,9 +147,9 @@ Steps follow CLI **install** ordering: **`.fullsend` / config** → **agent GitH
 
 **Then**
 
-3. Production sign-in and **org dashboard** (checking, permissions, status).  
-4. Read-only **org/repo** views and TS **status engine**.  
-5. **Wizards:** onboard → repair → repo-scoped → uninstall.  
+3. Production sign-in and **org dashboard** (checking, permissions, status).
+4. Read-only **org/repo** views and TS **status engine**.
+5. **Wizards:** onboard → repair → repo-scoped → uninstall.
 6. **Full** self-hosted operator documentation, hardening (CSP, rate limits, a11y).
 
 ## Appendix A — Permission matrix
@@ -160,12 +160,12 @@ The table itself lives in this document once the first row exists; until then, t
 
 ## Appendix B — Related code references
 
-- `internal/cli/admin.go` — install, uninstall, analyze entrypoints  
-- `internal/layers/*` — `ConfigRepoLayer`, `WorkflowsLayer`, `SecretsLayer`, `EnrollmentLayer`  
-- `internal/appsetup/*` — GitHub App setup per agent role  
+- `internal/cli/admin.go` — install, uninstall, analyze entrypoints
+- `internal/layers/*` — `ConfigRepoLayer`, `WorkflowsLayer`, `SecretsLayer`, `EnrollmentLayer`
+- `internal/appsetup/*` — GitHub App setup per agent role
 
 ## Open items
 
-- Confirm **GitHub App** user token **web** flow for **static SPA** (secret-less or accepted deviation).  
-- Finalize **Svelte** vs alternative frontend after team input.  
+- Confirm **GitHub App** user token **web** flow for **static SPA** (secret-less or accepted deviation).
+- Finalize **Svelte** vs alternative frontend after team input.
 - Expand **Appendix A** from code during first implementation PRs.
