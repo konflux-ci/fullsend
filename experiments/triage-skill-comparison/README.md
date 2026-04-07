@@ -212,6 +212,10 @@ Based on these results, here is what we think should inform the triage agent des
 
 6. **The experiment framework itself is ready for reuse.** The file-based simulation, multi-trial aggregation, and judge scoring rubric can be used to evaluate the production triage agent as it develops. Run the same scenarios against the real implementation to track progress.
 
+## Future work
+
+This experiment has been succeeded by [triage-strategy-evaluation](../triage-strategy-evaluation/), which addresses methodological limitations identified in this study: too few scenarios, unrealistic reporter behavior, same-model judging, premature resolution bias in the prompt framing, unequal adapter effort, and a self-contradictory efficiency criterion. See the v2 README for the full list of changes.
+
 ## Design decisions
 
 ### Why file-based simulation?
