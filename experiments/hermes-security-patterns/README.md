@@ -121,7 +121,16 @@ uv venv .venv
 uv pip install pyyaml
 
 # Install tirith (for static scanning tests)
+# macOS
 brew install sheeki03/tap/tirith
+# Linux (amd64)
+curl -fsSL https://github.com/sheeki03/tirith/releases/latest/download/tirith-x86_64-unknown-linux-gnu.tar.gz \
+  | tar xz -C /usr/local/bin tirith
+# Linux (arm64)
+curl -fsSL https://github.com/sheeki03/tirith/releases/latest/download/tirith-aarch64-unknown-linux-gnu.tar.gz \
+  | tar xz -C /usr/local/bin tirith
+# Or via cargo (any platform)
+cargo install tirith
 
 # Run full evaluation
 uv run python run_eval.py
