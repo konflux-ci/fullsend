@@ -104,6 +104,8 @@ Identity is not the same as trust. An agent's identity lets it authenticate to e
 - Credential isolation model: credentials stay in host-side servers, never enter agent sandboxes. Agents access credentialed services via REST APIs, with L7 network policy enforcing per-agent method/path restrictions ([ADR 0011](ADRs/0011-credential-isolation-for-sandboxed-agents.md)).
 - Per-role GitHub Apps with manifest-based creation. Each agent role gets its own app with scoped permissions. PEMs stored as repo secrets on `.fullsend` ([ADR 0007](ADRs/0007-per-role-github-apps.md)).
 
+One concrete implementation option is [`oidcx`](https://github.com/oxidecomputer/oidcx): a service that accepts OIDC identity tokens and exchanges them for short-lived access tokens. It can mint tokens scoped to selected GitHub repositories and permissions, or to selected Oxide silos and permissions, and it also ships with a GitHub Action wrapper. In a Fullsend deployment, this can be used by the sandbox entrypoint to narrow a broad GitHub App identity down to only the specific permissions an agent needs for the current run.
+
 **Open questions:**
 
 - ~~What identity model fits best — separate bot accounts per agent role, a single bot account with role metadata, GitHub App installations, or something else?~~ Decided in [ADR 0007](ADRs/0007-per-role-github-apps.md).
