@@ -1,14 +1,15 @@
 """Evaluate security controls against fullsend-specific attack payloads.
 
-Static scanning (unicode, context injection, secrets) is delegated to Tirith CLI.
-SSRF protection is handled by the Claude Code PreToolUse hook (hooks/ssrf_pretool.py).
+Static scanning (unicode, context injection) is delegated to Tirith CLI.
+Secret redaction is handled by the PostToolUse hook (hooks/secret_redact_posttool.py).
+SSRF protection is handled by the PreToolUse hook (hooks/ssrf_pretool.py).
 
 Usage:
     # Full evaluation (requires tirith in PATH)
     uv run python run_eval.py
 
-    # SSRF hook tests only (no external deps)
-    uv run python run_eval.py --ssrf-only
+    # Hook tests only (no tirith needed)
+    uv run python run_eval.py --hooks-only
 
     # Tirith scan tests only
     uv run python run_eval.py --tirith-only
@@ -24,7 +25,8 @@ from pathlib import Path
 import yaml
 
 PAYLOADS_DIR = Path(__file__).parent / "payloads"
-HOOK_PATH = Path(__file__).parent / "hooks" / "ssrf_pretool.py"
+SSRF_HOOK_PATH = Path(__file__).parent / "hooks" / "ssrf_pretool.py"
+REDACT_HOOK_PATH = Path(__file__).parent / "hooks" / "secret_redact_posttool.py"
 
 
 def load_payloads() -> list[dict]:
@@ -120,7 +122,6 @@ def eval_tirith_file_scan(payload: dict) -> dict:
     expected_map = {
         "context_injection": "blocked",
         "unicode_normalizer": "normalized",
-        "secret_redactor": "detected",
     }
     expected = payload.get("expected") == expected_map.get(scanner_name, "detected")
 
@@ -139,7 +140,7 @@ def eval_tirith_file_scan(payload: dict) -> dict:
 def eval_tirith(payloads: list[dict]) -> list[dict]:
     """Run tirith scan against all static-scanning payloads."""
     results = []
-    tirith_scanners = {"context_injection", "unicode_normalizer", "secret_redactor"}
+    tirith_scanners = {"context_injection", "unicode_normalizer"}
 
     for p in payloads:
         if p.get("scanner") not in tirith_scanners:
@@ -179,7 +180,7 @@ def eval_ssrf_hook(payloads: list[dict]) -> list[dict]:
 
             try:
                 proc = subprocess.run(
-                    [sys.executable, str(HOOK_PATH)],
+                    [sys.executable, str(SSRF_HOOK_PATH)],
                     input=hook_input,
                     capture_output=True,
                     text=True,
@@ -211,7 +212,7 @@ def eval_ssrf_hook(payloads: list[dict]) -> list[dict]:
                     "tool_input": {"command": f"curl -sL {chain_url}"},
                 })
                 proc = subprocess.run(
-                    [sys.executable, str(HOOK_PATH)],
+                    [sys.executable, str(SSRF_HOOK_PATH)],
                     input=hook_input,
                     capture_output=True,
                     text=True,
@@ -242,6 +243,78 @@ def eval_ssrf_hook(payloads: list[dict]) -> list[dict]:
             "correct": any_blocked == expected,
             "url_results": url_results,
             "chain_results": chain_results,
+            "latency_ms": elapsed_ms,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Secret redaction hook evaluation
+# ---------------------------------------------------------------------------
+
+
+def eval_redact_hook(payloads: list[dict]) -> list[dict]:
+    """Test the PostToolUse secret redaction hook against secret payloads."""
+    results = []
+
+    for p in payloads:
+        if p.get("scanner") != "secret_redactor":
+            continue
+
+        text = p["text"]
+
+        start = time.perf_counter()
+
+        hook_input = json.dumps({
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo output"},
+            "tool_result": text,
+        })
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(REDACT_HOOK_PATH)],
+                input=hook_input,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            detected = False
+            redacted_text = ""
+            findings = []
+
+            if proc.stdout.strip():
+                try:
+                    out = json.loads(proc.stdout)
+                    redacted_text = out.get("tool_result", "")
+                    meta = out.get("metadata", {})
+                    count = meta.get("secrets_redacted", 0)
+                    patterns = meta.get("patterns", [])
+                    detected = count > 0
+                    findings = patterns
+                except json.JSONDecodeError:
+                    pass
+
+        except subprocess.TimeoutExpired:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            detected = False
+            findings = []
+            redacted_text = ""
+
+        expected = p.get("expected") == "detected"
+
+        results.append({
+            "name": p["name"],
+            "scanner": "redact_hook",
+            "detected": detected,
+            "expected": expected,
+            "correct": detected == expected,
+            "finding_count": len(findings),
+            "findings": findings[:5],
+            "redacted_preview": redacted_text[:200] if redacted_text else "",
             "latency_ms": elapsed_ms,
         })
 
@@ -284,6 +357,10 @@ def print_results(all_results: list[dict]):
                     print(f"         {bl:<8} {ur['url']}")
                     if ur.get("reason"):
                         print(f"                  -> {ur['reason']}")
+
+            # Show redacted preview
+            if r.get("redacted_preview"):
+                print(f"         redacted: {r['redacted_preview'][:80]}...")
 
             # Show tirith findings
             if r.get("findings") and r.get("finding_count", 0) > 0:
@@ -337,7 +414,9 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Evaluate Hermes security patterns")
-    parser.add_argument("--ssrf-only", action="store_true", help="Only test SSRF hook")
+    parser.add_argument(
+        "--hooks-only", action="store_true", help="Only test hooks (no tirith)"
+    )
     parser.add_argument(
         "--tirith-only", action="store_true", help="Only test tirith scan"
     )
@@ -348,7 +427,7 @@ def main():
 
     all_results = []
 
-    if not args.ssrf_only:
+    if not args.hooks_only:
         if tirith_available():
             print("Using tirith CLI for static scanning")
             all_results.extend(eval_tirith(payloads))
@@ -357,11 +436,17 @@ def main():
             print("  Install: brew install sheeki03/tap/tirith")
 
     if not args.tirith_only:
-        if HOOK_PATH.exists():
-            print(f"Using SSRF hook: {HOOK_PATH}")
+        if SSRF_HOOK_PATH.exists():
+            print(f"Using SSRF hook: {SSRF_HOOK_PATH}")
             all_results.extend(eval_ssrf_hook(payloads))
         else:
-            print(f"WARNING: SSRF hook not found at {HOOK_PATH}")
+            print(f"WARNING: SSRF hook not found at {SSRF_HOOK_PATH}")
+
+        if REDACT_HOOK_PATH.exists():
+            print(f"Using redact hook: {REDACT_HOOK_PATH}")
+            all_results.extend(eval_redact_hook(payloads))
+        else:
+            print(f"WARNING: Redact hook not found at {REDACT_HOOK_PATH}")
 
     if not all_results:
         print("\nNo tests ran. Install tirith or check hook path.")
