@@ -53,9 +53,9 @@ GEMINI_MODEL=gemini-3-flash-preview ./run-experiment.sh --gemini-only  # specifi
 ### Configuration
 
 ```bash
-export GCP_PROJECT_ID="it-gcp-konflux-dev-fullsend"
+export GCP_PROJECT_ID="<your-gcp-project>"
 export GCP_LOCATION="us-central1"
-export MODEL_ARMOR_TEMPLATE="fullsend-issue-scan"
+export MODEL_ARMOR_TEMPLATE="<your-template-name>"
 ```
 
 ## Results

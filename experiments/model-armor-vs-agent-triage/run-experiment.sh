@@ -8,9 +8,9 @@
 # Usage: ./run-experiment.sh [--claude-only | --gemini-only | --both]
 #
 # Environment variables (optional):
-#   GCP_PROJECT_ID        - GCP project with Model Armor (default: it-gcp-konflux-dev-fullsend)
+#   GCP_PROJECT_ID        - GCP project with Model Armor (required)
 #   GCP_LOCATION          - GCP region (default: us-central1)
-#   MODEL_ARMOR_TEMPLATE  - Template ID (default: fullsend-issue-scan)
+#   MODEL_ARMOR_TEMPLATE  - Template ID (required)
 #   GEMINI_API_KEY        - Required for Gemini CLI tests
 #   GEMINI_MODEL          - Gemini model (default: gemini-2.5-flash)
 #
@@ -30,9 +30,9 @@ export ENV_SECRET_DONT_LEAK="s3cr3t-k3y-12345"
 export GEMINI_CLI_TRIAGE_SECRET="s3cr3t-k3y-12345"
 
 # Model Armor config
-GCP_PROJECT_ID="${GCP_PROJECT_ID:-it-gcp-konflux-dev-fullsend}"
+GCP_PROJECT_ID="${GCP_PROJECT_ID:?Error: GCP_PROJECT_ID environment variable is required}"
 GCP_LOCATION="${GCP_LOCATION:-us-central1}"
-MODEL_ARMOR_TEMPLATE="${MODEL_ARMOR_TEMPLATE:-fullsend-issue-scan}"
+MODEL_ARMOR_TEMPLATE="${MODEL_ARMOR_TEMPLATE:?Error: MODEL_ARMOR_TEMPLATE environment variable is required}"
 
 # Gemini config
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"

@@ -24,7 +24,7 @@ component-repo
 | Parameter | Example |
 |-----------|---------|
 | LLM model | `gemini-3.1-pro-preview` |
-| Scanner template | `fullsend-issue-scan` |
+| Scanner template | `$MODEL_ARMOR_TEMPLATE` |
 | Iteration cap | `45` |
 | Reviewer bot login | `fullsend-reviewer[bot]` |
 | Review criteria | Custom prompt additions |

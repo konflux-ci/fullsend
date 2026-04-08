@@ -2,7 +2,7 @@
 
 ## Configuration
 
-- **Model Armor:** `it-gcp-konflux-dev-fullsend` / `fullsend-issue-scan` (PI filter: `LOW_AND_ABOVE`)
+- **Model Armor:** `$GCP_PROJECT_ID` / `$MODEL_ARMOR_TEMPLATE` (PI filter: `LOW_AND_ABOVE`)
 - **Claude Code:** Claude Sonnet 4.6, `--dangerously-skip-permissions --max-turns 3`
 - **Gemini CLI models tested** (all with `--approval-mode=yolo`):
   - gemini-2.5-flash
