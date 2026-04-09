@@ -1,0 +1,162 @@
+package vertex
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// fakeGCPClient is a test double for GCPClient.
+type fakeGCPClient struct {
+	existingSAs     map[string]bool // key: "projectID/saName"
+	createdSAs      []string        // "projectID/saName"
+	createdKeys     []string        // "projectID/saEmail"
+	keyData         []byte
+	getErr          error
+	createErr       error
+	createKeyErr    error
+}
+
+func newFakeGCPClient() *fakeGCPClient {
+	return &fakeGCPClient{
+		existingSAs: make(map[string]bool),
+		keyData:     []byte(`{"type":"service_account","project_id":"test-project"}`),
+	}
+}
+
+func (f *fakeGCPClient) GetServiceAccount(_ context.Context, projectID, saName string) error {
+	if f.getErr != nil {
+		return f.getErr
+	}
+	key := projectID + "/" + saName
+	if !f.existingSAs[key] {
+		return fmt.Errorf("service account %s not found in project %s", saName, projectID)
+	}
+	return nil
+}
+
+func (f *fakeGCPClient) CreateServiceAccount(_ context.Context, projectID, saName, _ string) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.createdSAs = append(f.createdSAs, projectID+"/"+saName)
+	f.existingSAs[projectID+"/"+saName] = true
+	return nil
+}
+
+func (f *fakeGCPClient) CreateServiceAccountKey(_ context.Context, projectID, saEmail string) ([]byte, error) {
+	if f.createKeyErr != nil {
+		return nil, f.createKeyErr
+	}
+	f.createdKeys = append(f.createdKeys, projectID+"/"+saEmail)
+	return f.keyData, nil
+}
+
+func TestProvision_Mode1_CreateSAAndKey(t *testing.T) {
+	gcp := newFakeGCPClient()
+	p := New(Config{ProjectID: "my-project"}, gcp)
+
+	secrets, err := p.Provision(context.Background())
+	require.NoError(t, err)
+
+	// Should have created a service account.
+	require.Len(t, gcp.createdSAs, 1)
+	assert.Equal(t, "my-project/fullsend-agent", gcp.createdSAs[0])
+
+	// Should have created a key.
+	require.Len(t, gcp.createdKeys, 1)
+	assert.Equal(t, "my-project/fullsend-agent@my-project.iam.gserviceaccount.com", gcp.createdKeys[0])
+
+	// Should return both secrets.
+	assert.Equal(t, string(gcp.keyData), secrets[SecretCredentials])
+	assert.Equal(t, "my-project", secrets[SecretProjectID])
+}
+
+func TestProvision_Mode2_ExistingSA(t *testing.T) {
+	gcp := newFakeGCPClient()
+	gcp.existingSAs["my-project/my-sa"] = true
+	p := New(Config{ProjectID: "my-project", ServiceAccountName: "my-sa"}, gcp)
+
+	secrets, err := p.Provision(context.Background())
+	require.NoError(t, err)
+
+	// Should NOT have created a service account.
+	assert.Empty(t, gcp.createdSAs)
+
+	// Should have created a key for the existing SA.
+	require.Len(t, gcp.createdKeys, 1)
+	assert.Equal(t, "my-project/my-sa@my-project.iam.gserviceaccount.com", gcp.createdKeys[0])
+
+	assert.Equal(t, string(gcp.keyData), secrets[SecretCredentials])
+	assert.Equal(t, "my-project", secrets[SecretProjectID])
+}
+
+func TestProvision_Mode2_SANotFound(t *testing.T) {
+	gcp := newFakeGCPClient()
+	// SA does not exist.
+	p := New(Config{ProjectID: "my-project", ServiceAccountName: "missing-sa"}, gcp)
+
+	_, err := p.Provision(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing-sa")
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestProvision_Mode3_PreMadeKey(t *testing.T) {
+	gcp := newFakeGCPClient()
+	credJSON := `{"type":"service_account","project_id":"my-project","private_key":"..."}`
+	p := New(Config{ProjectID: "my-project", CredentialJSON: credJSON}, gcp)
+
+	secrets, err := p.Provision(context.Background())
+	require.NoError(t, err)
+
+	// No GCP API calls should have been made.
+	assert.Empty(t, gcp.createdSAs)
+	assert.Empty(t, gcp.createdKeys)
+
+	assert.Equal(t, credJSON, secrets[SecretCredentials])
+	assert.Equal(t, "my-project", secrets[SecretProjectID])
+}
+
+func TestProvision_MissingProjectID(t *testing.T) {
+	gcp := newFakeGCPClient()
+	p := New(Config{}, gcp)
+
+	_, err := p.Provision(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project ID")
+}
+
+func TestProvision_CreateSAError(t *testing.T) {
+	gcp := newFakeGCPClient()
+	gcp.createErr = fmt.Errorf("permission denied")
+	p := New(Config{ProjectID: "my-project"}, gcp)
+
+	_, err := p.Provision(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "permission denied")
+}
+
+func TestProvision_CreateKeyError(t *testing.T) {
+	gcp := newFakeGCPClient()
+	gcp.createKeyErr = fmt.Errorf("quota exceeded")
+	p := New(Config{ProjectID: "my-project"}, gcp)
+
+	_, err := p.Provision(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "quota exceeded")
+}
+
+func TestName(t *testing.T) {
+	p := New(Config{}, nil)
+	assert.Equal(t, "vertex", p.Name())
+}
+
+func TestSecretNames(t *testing.T) {
+	p := New(Config{}, nil)
+	names := p.SecretNames()
+	assert.Equal(t, []string{SecretCredentials, SecretProjectID}, names)
+}

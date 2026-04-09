@@ -22,6 +22,17 @@
         }
       }
     },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["vertex"]
+        }
+      }
+    },
     "defaults": {
       "type": "object",
       "additionalProperties": false,

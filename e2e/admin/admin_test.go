@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -19,6 +20,8 @@ import (
 	"github.com/fullsend-ai/fullsend/internal/config"
 	"github.com/fullsend-ai/fullsend/internal/forge"
 	gh "github.com/fullsend-ai/fullsend/internal/forge/github"
+	"github.com/fullsend-ai/fullsend/internal/inference"
+	"github.com/fullsend-ai/fullsend/internal/inference/vertex"
 	"github.com/fullsend-ai/fullsend/internal/layers"
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
@@ -141,7 +144,8 @@ func TestAdminInstallUninstall(t *testing.T) {
 	hasPrivate := hasPrivateRepos(allRepos)
 
 	// Second install should reuse existing dispatch token (empty string).
-	stack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs)
+	// Inference provider is nil for idempotent re-install (already provisioned).
+	stack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs, nil)
 	err = stack.InstallAll(ctx)
 	require.NoError(t, err, "second InstallAll should succeed")
 	verifyInstalled(t, env, orgCfg, enabledRepos, defaultBranches, agentCreds)
@@ -212,7 +216,26 @@ func runFullInstall(t *testing.T, env *e2eEnv) ([]layers.AgentCredentials, *conf
 		agents[i] = ac.AgentEntry
 	}
 
-	orgCfg := config.NewOrgConfig(repoNames, enabledRepos, defaultRoles, agents)
+	// Build inference provider if vertex key is available (mode 3).
+	var inferenceProvider inference.Provider
+	var inferenceProviderName string
+	if vertexKey := os.Getenv("E2E_HALFSEND_VERTEX_KEY"); vertexKey != "" {
+		gcpProjectID := os.Getenv("E2E_GCP_PROJECT_ID")
+		if gcpProjectID == "" {
+			// Try to extract project_id from the key JSON.
+			gcpProjectID = extractProjectID(t, vertexKey)
+		}
+		inferenceProvider = vertex.New(vertex.Config{
+			ProjectID:      gcpProjectID,
+			CredentialJSON: vertexKey,
+		}, nil)
+		inferenceProviderName = "vertex"
+		t.Logf("Inference provider: vertex (project: %s)", gcpProjectID)
+	} else {
+		t.Log("E2E_HALFSEND_VERTEX_KEY not set, skipping inference layer")
+	}
+
+	orgCfg := config.NewOrgConfig(repoNames, enabledRepos, defaultRoles, agents, inferenceProviderName)
 
 	user, err := env.client.GetAuthenticatedUser(ctx)
 	require.NoError(t, err, "getting authenticated user")
@@ -252,7 +275,7 @@ func runFullInstall(t *testing.T, env *e2eEnv) ([]layers.AgentCredentials, *conf
 
 	// Build full layer stack with the dispatch token and install all layers.
 	// Config-repo and workflows are idempotent, so re-running them is harmless.
-	stack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs)
+	stack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs, inferenceProvider)
 
 	err = stack.InstallAll(ctx)
 	require.NoError(t, err, "installing layers")
@@ -262,11 +285,12 @@ func runFullInstall(t *testing.T, env *e2eEnv) ([]layers.AgentCredentials, *conf
 
 func runUninstall(t *testing.T, env *e2eEnv) {
 	t.Helper()
-	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil)
+	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil, "")
 	stack := layers.NewStack(
 		layers.NewConfigRepoLayer(testOrg, env.client, emptyCfg, env.printer, false),
 		layers.NewWorkflowsLayer(testOrg, env.client, env.printer, ""),
 		layers.NewSecretsLayer(testOrg, env.client, nil, env.printer),
+		layers.NewInferenceLayer(testOrg, env.client, nil, env.printer),
 		layers.NewDispatchTokenLayer(testOrg, env.client, "", nil, env.printer),
 		layers.NewEnrollmentLayer(testOrg, env.client, nil, nil, env.printer),
 	)
@@ -278,11 +302,12 @@ func runUninstall(t *testing.T, env *e2eEnv) {
 // (expected when resources are already deleted).
 func runUninstallAllowNotFound(t *testing.T, env *e2eEnv) {
 	t.Helper()
-	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil)
+	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil, "")
 	stack := layers.NewStack(
 		layers.NewConfigRepoLayer(testOrg, env.client, emptyCfg, env.printer, false),
 		layers.NewWorkflowsLayer(testOrg, env.client, env.printer, ""),
 		layers.NewSecretsLayer(testOrg, env.client, nil, env.printer),
+		layers.NewInferenceLayer(testOrg, env.client, nil, env.printer),
 		layers.NewDispatchTokenLayer(testOrg, env.client, "", nil, env.printer),
 		layers.NewEnrollmentLayer(testOrg, env.client, nil, nil, env.printer),
 	)
@@ -337,6 +362,15 @@ func verifyInstalled(t *testing.T, env *e2eEnv, orgCfg *config.OrgConfig, enable
 		assert.True(t, exists, "variable %s should exist", varName)
 	}
 
+	// Inference secrets exist if vertex key was provided.
+	if os.Getenv("E2E_HALFSEND_VERTEX_KEY") != "" {
+		for _, secretName := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "GCP_PROJECT_ID"} {
+			exists, secErr := env.client.RepoSecretExists(ctx, testOrg, forge.ConfigRepoName, secretName)
+			assert.NoError(t, secErr, "checking inference secret %s", secretName)
+			assert.True(t, exists, "inference secret %s should exist", secretName)
+		}
+	}
+
 	// Dispatch token org secret exists.
 	dispatchExists, err := env.client.OrgSecretExists(ctx, testOrg, "FULLSEND_DISPATCH_TOKEN")
 	assert.NoError(t, err, "checking dispatch token org secret")
@@ -362,7 +396,7 @@ func verifyInstalled(t *testing.T, env *e2eEnv, orgCfg *config.OrgConfig, enable
 	require.NoError(t, err)
 	hasPrivate := hasPrivateRepos(allRepos)
 
-	analyzeStack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", nil)
+	analyzeStack := buildTestLayerStack(testOrg, env.client, orgCfg, env.printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", nil, nil)
 	reports, err := analyzeStack.AnalyzeAll(ctx)
 	require.NoError(t, err, "analyzing layers")
 	for _, report := range reports {
@@ -394,11 +428,12 @@ func verifyNotInstalled(t *testing.T, env *e2eEnv) {
 	assert.NoError(t, err, "checking dispatch token after uninstall")
 	assert.False(t, dispatchExists, "FULLSEND_DISPATCH_TOKEN org secret should be deleted")
 
-	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil)
+	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil, "")
 	stack := layers.NewStack(
 		layers.NewConfigRepoLayer(testOrg, env.client, emptyCfg, env.printer, false),
 		layers.NewWorkflowsLayer(testOrg, env.client, env.printer, ""),
 		layers.NewSecretsLayer(testOrg, env.client, nil, env.printer),
+		layers.NewInferenceLayer(testOrg, env.client, nil, env.printer),
 		layers.NewDispatchTokenLayer(testOrg, env.client, "", nil, env.printer),
 		layers.NewEnrollmentLayer(testOrg, env.client, nil, nil, env.printer),
 	)
@@ -431,11 +466,13 @@ func buildTestLayerStack(
 	agentCreds []layers.AgentCredentials,
 	dispatchToken string,
 	enrolledRepoIDs []int64,
+	inferenceProvider inference.Provider,
 ) *layers.Stack {
 	return layers.NewStack(
 		layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate),
 		layers.NewWorkflowsLayer(org, client, printer, user),
 		layers.NewSecretsLayer(org, client, agentCreds, printer),
+		layers.NewInferenceLayer(org, client, inferenceProvider, printer),
 		layers.NewDispatchTokenLayer(org, client, dispatchToken, enrolledRepoIDs, printer),
 		layers.NewEnrollmentLayer(org, client, enabledRepos, defaultBranches, printer),
 	)
@@ -464,4 +501,22 @@ func hasPrivateRepos(repos []forge.Repository) bool {
 		}
 	}
 	return false
+}
+
+// extractProjectID attempts to extract project_id from a GCP service account
+// key JSON string. Falls back to "unknown" if parsing fails.
+func extractProjectID(t *testing.T, keyJSON string) string {
+	t.Helper()
+	var key struct {
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.Unmarshal([]byte(keyJSON), &key); err != nil {
+		t.Logf("warning: could not parse project_id from vertex key: %v", err)
+		return "unknown"
+	}
+	if key.ProjectID == "" {
+		t.Log("warning: vertex key has empty project_id")
+		return "unknown"
+	}
+	return key.ProjectID
 }

@@ -25,7 +25,7 @@ func TestNewOrgConfig(t *testing.T) {
 		{Role: "fullsend", Name: "test", Slug: "test-slug"},
 	}
 
-	cfg := NewOrgConfig(allRepos, enabledRepos, roles, agents)
+	cfg := NewOrgConfig(allRepos, enabledRepos, roles, agents, "")
 
 	assert.Equal(t, "1", cfg.Version)
 	assert.Equal(t, "github-actions", cfg.Dispatch.Platform)
@@ -233,4 +233,100 @@ repos:
 	assert.Equal(t, "my-app-slug", cfg.Agents[0].Slug)
 	assert.True(t, cfg.Repos["repo-x"].Enabled)
 	assert.False(t, cfg.Repos["repo-y"].Enabled)
+}
+
+func TestNewOrgConfig_WithInferenceProvider(t *testing.T) {
+	cfg := NewOrgConfig(nil, nil, nil, nil, "vertex")
+	assert.Equal(t, "vertex", cfg.Inference.Provider)
+}
+
+func TestNewOrgConfig_WithoutInferenceProvider(t *testing.T) {
+	cfg := NewOrgConfig(nil, nil, nil, nil, "")
+	assert.Empty(t, cfg.Inference.Provider)
+}
+
+func TestOrgConfigValidate_ValidInferenceProvider(t *testing.T) {
+	cfg := &OrgConfig{
+		Version:   "1",
+		Dispatch:  DispatchConfig{Platform: "github-actions"},
+		Inference: InferenceConfig{Provider: "vertex"},
+		Defaults: RepoDefaults{
+			Roles:                    []string{"fullsend"},
+			MaxImplementationRetries: 2,
+		},
+	}
+	err := cfg.Validate()
+	assert.NoError(t, err)
+}
+
+func TestOrgConfigValidate_InvalidInferenceProvider(t *testing.T) {
+	cfg := &OrgConfig{
+		Version:   "1",
+		Dispatch:  DispatchConfig{Platform: "github-actions"},
+		Inference: InferenceConfig{Provider: "openai"},
+		Defaults: RepoDefaults{
+			Roles:                    []string{"fullsend"},
+			MaxImplementationRetries: 2,
+		},
+	}
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "openai")
+}
+
+func TestOrgConfigValidate_EmptyInferenceProvider(t *testing.T) {
+	cfg := &OrgConfig{
+		Version:  "1",
+		Dispatch: DispatchConfig{Platform: "github-actions"},
+		Defaults: RepoDefaults{
+			Roles:                    []string{"fullsend"},
+			MaxImplementationRetries: 2,
+		},
+	}
+	err := cfg.Validate()
+	assert.NoError(t, err)
+}
+
+func TestParseOrgConfig_WithInference(t *testing.T) {
+	yamlData := `
+version: "1"
+dispatch:
+  platform: github-actions
+inference:
+  provider: vertex
+defaults:
+  roles:
+    - fullsend
+  max_implementation_retries: 2
+  auto_merge: false
+agents: []
+repos: {}
+`
+	cfg, err := ParseOrgConfig([]byte(yamlData))
+	require.NoError(t, err)
+	assert.Equal(t, "vertex", cfg.Inference.Provider)
+}
+
+func TestOrgConfigMarshal_WithInference(t *testing.T) {
+	cfg := &OrgConfig{
+		Version:   "1",
+		Dispatch:  DispatchConfig{Platform: "github-actions"},
+		Inference: InferenceConfig{Provider: "vertex"},
+		Defaults: RepoDefaults{
+			Roles:                    []string{"fullsend"},
+			MaxImplementationRetries: 2,
+		},
+		Agents: []AgentEntry{},
+		Repos:  map[string]RepoConfig{},
+	}
+
+	data, err := cfg.Marshal()
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "inference:")
+	assert.Contains(t, string(data), "provider: vertex")
+}
+
+func TestValidProviders(t *testing.T) {
+	providers := ValidProviders()
+	assert.Equal(t, []string{"vertex"}, providers)
 }

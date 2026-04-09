@@ -30,6 +30,18 @@ Schema version of this document. For this SPEC, the value MUST be exactly `1`.
 
 Dispatch backend for agent work. The only defined value in v1 is `github-actions`.
 
+### `inference` (mapping, optional)
+
+Configures the inference provider used by agents for LLM API access.
+
+#### `inference.provider` (string, required when `inference` is present)
+
+Inference backend for agent LLM calls. Defined values in v1:
+
+- `vertex` — Google Cloud Vertex AI
+
+When `inference` is present and `provider` is `vertex`, the install process provisions GCP service account credentials and stores them as repository secrets on `.fullsend` (see [ADR 0014](../adr-0014-github-apps-and-secrets/SPEC.md) §5).
+
 ### `defaults` (mapping, required)
 
 Organization-wide defaults applied to repositories unless overridden elsewhere in this file.
@@ -84,6 +96,7 @@ A document is **valid v1** if and only if:
 3. `dispatch.platform` is `github-actions`.
 4. `defaults.max_implementation_retries` ≥ 0.
 5. Every entry in `defaults.roles` is one of the four defined role literals.
+6. If `inference` is present, `inference.provider` is one of the defined provider literals (`vertex`).
 
 Per-repo `roles`, when present, are not checked by the v1 reference validator; tooling SHOULD still restrict values to the same role literals for consistency.
 
