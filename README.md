@@ -39,6 +39,7 @@ This is not a product spec. It's an evolving exploration of a hard problem space
 - **[docs/ADRs/](docs/ADRs/)** — Architecture Decision Records for crystallizing specific decisions (see [ADR 0001](docs/ADRs/0001-use-adrs-for-decision-making.md))
 - **[docs/landscape.md](docs/landscape.md)** — Survey of AI code review tools, orchestration patterns, and connectivity gateways; how they relate to our goals (time-sensitive — check the date)
 - **[experiments/](experiments/)** — Logs and results from trying things in practice
+- **[docs/secretarial-agent.md](docs/secretarial-agent.md)** — Secretarial agent: automated meeting notes → GitHub issue backlog
 
 ## How to contribute
 
