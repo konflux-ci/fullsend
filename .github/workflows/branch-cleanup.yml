@@ -1,0 +1,22 @@
+name: Clean up stale branches
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # Weekly on Sundays at 3am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete stale branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          STALE_DAYS: "30"
+        run: ./hack/clean-stale-branches

@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# clean-stale-branches - Delete remote branches with no open PR and no recent commits
+#
+# Requires: gh CLI authenticated with contents:write and pull-requests:read
+#
+# Usage: clean-stale-branches [--dry-run]
+#
+# Environment:
+#   GH_REPO    - owner/repo (defaults to current repo via gh)
+#   STALE_DAYS - days of inactivity before a branch is considered stale (default: 30)
+
+set -euo pipefail
+
+dry_run=false
+if [[ "${1:-}" == "--dry-run" ]]; then
+  dry_run=true
+fi
+
+: "${GH_REPO:=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')}"
+: "${STALE_DAYS:=30}"
+
+cutoff=$(date -u -d "${STALE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+deleted=0
+skipped=0
+
+echo "Cutoff: ${cutoff}"
+echo "Branches with no open PR and no commits in ${STALE_DAYS} days will be deleted."
+echo ""
+
+while IFS= read -r branch; do
+  if [ "${branch}" = "main" ]; then
+    continue
+  fi
+
+  pr_count=$(gh pr list --repo "${GH_REPO}" --head "${branch}" --state open --json number --jq 'length')
+  if [ "${pr_count}" -gt 0 ]; then
+    echo "SKIP (open PR): ${branch}"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  last_commit=$(gh api -X GET "repos/${GH_REPO}/commits" -f sha="${branch}" -f per_page=1 --jq '.[0].commit.committer.date')
+
+  if [[ "${last_commit}" < "${cutoff}" ]]; then
+    if [ "${dry_run}" = true ]; then
+      echo "WOULD DELETE: ${branch} (last commit: ${last_commit})"
+    else
+      echo "DELETE: ${branch} (last commit: ${last_commit})"
+      gh api -X DELETE "repos/${GH_REPO}/git/refs/heads/${branch}" --silent || echo "  (failed — branch may be protected)"
+    fi
+    deleted=$((deleted + 1))
+  else
+    echo "KEEP (recent): ${branch} (last commit: ${last_commit})"
+    skipped=$((skipped + 1))
+  fi
+done < <(gh api "repos/${GH_REPO}/branches" --paginate --jq '.[].name')
+
+echo ""
+echo "Done. Deleted: ${deleted}, Skipped: ${skipped}"
