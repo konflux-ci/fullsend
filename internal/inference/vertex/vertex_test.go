@@ -150,6 +150,32 @@ func TestProvision_CreateKeyError(t *testing.T) {
 	assert.Contains(t, err.Error(), "quota exceeded")
 }
 
+func TestProvision_NilGCPClient_Mode1(t *testing.T) {
+	p := New(Config{ProjectID: "my-project"}, nil)
+
+	_, err := p.Provision(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GCP client is required")
+}
+
+func TestProvision_NilGCPClient_Mode2(t *testing.T) {
+	p := New(Config{ProjectID: "my-project", ServiceAccountName: "my-sa"}, nil)
+
+	_, err := p.Provision(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GCP client is required")
+}
+
+func TestProvision_NilGCPClient_Mode3_OK(t *testing.T) {
+	// Mode 3 should work fine without a GCP client.
+	credJSON := `{"type":"service_account"}`
+	p := New(Config{ProjectID: "my-project", CredentialJSON: credJSON}, nil)
+
+	secrets, err := p.Provision(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, credJSON, secrets[SecretCredentials])
+}
+
 func TestName(t *testing.T) {
 	p := New(Config{}, nil)
 	assert.Equal(t, "vertex", p.Name())

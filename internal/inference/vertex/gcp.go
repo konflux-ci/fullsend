@@ -18,6 +18,9 @@ import (
 // gcpIDPattern validates GCP project IDs and service account names.
 var gcpIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
+// saEmailPattern validates GCP service account email addresses.
+var saEmailPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
+
 // LiveGCPClient implements GCPClient using the GCP IAM REST API.
 // It obtains access tokens via Application Default Credentials.
 type LiveGCPClient struct {
@@ -148,6 +151,9 @@ func (c *LiveGCPClient) CreateServiceAccount(ctx context.Context, projectID, saN
 func (c *LiveGCPClient) CreateServiceAccountKey(ctx context.Context, projectID, saEmail string) ([]byte, error) {
 	if !gcpIDPattern.MatchString(projectID) {
 		return nil, fmt.Errorf("invalid GCP project ID %q", projectID)
+	}
+	if !saEmailPattern.MatchString(saEmail) {
+		return nil, fmt.Errorf("invalid service account email %q", saEmail)
 	}
 
 	reqURL := fmt.Sprintf("https://iam.googleapis.com/v1/projects/%s/serviceAccounts/%s/keys",

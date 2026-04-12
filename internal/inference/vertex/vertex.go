@@ -78,6 +78,10 @@ func (p *Provider) Provision(ctx context.Context) (map[string]string, error) {
 		}, nil
 	}
 
+	if p.gcpAPI == nil {
+		return nil, fmt.Errorf("GCP client is required for modes 1 and 2 (no credential JSON provided)")
+	}
+
 	saName := p.cfg.ServiceAccountName
 	if saName == "" {
 		// Mode 1: create a new service account.
