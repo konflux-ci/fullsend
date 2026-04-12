@@ -47,13 +47,16 @@ For each role, the setup runner (`appsetup.Setup.Run`):
 
 All of the following are **repository-level** Actions secrets and variables on **`.fullsend`** in the target organization.
 
-| Kind     | Name pattern                          | Value |
-|----------|----------------------------------------|-------|
-| Secret   | `FULLSEND_<ROLE>_APP_PRIVATE_KEY`      | PEM text of the GitHub App private key |
-| Variable | `FULLSEND_<ROLE>_APP_ID`               | Decimal string of the GitHub App numeric ID |
+| Kind     | Name pattern                          | Value | Layer |
+|----------|----------------------------------------|-------|-------|
+| Secret   | `FULLSEND_<ROLE>_APP_PRIVATE_KEY`      | PEM text of the GitHub App private key | secrets |
+| Variable | `FULLSEND_<ROLE>_APP_ID`               | Decimal string of the GitHub App numeric ID | secrets |
+| Secret   | `FULLSEND_GCP_SA_KEY_JSON`       | GCP service account key JSON (when inference provider is `vertex`) | inference |
+| Secret   | `GCP_PROJECT_ID`                       | GCP project identifier (when inference provider is `vertex`) | inference |
 
 - `<ROLE>` is the agent role in **ASCII uppercase** (e.g. `FULLSEND_TRIAGE_APP_PRIVATE_KEY`).
 - For each role processed in install, if PEM is non-empty, the implementation **must** create/update the secret and variable as above; if PEM is empty (reuse path), the implementation **must** skip writing that role’s secret/variable.
+- Inference secrets are only created when an inference provider is configured in `config.yaml` (see [ADR 0011](../adr-0011-org-config-yaml/SPEC.md)). When `inference.provider` is `vertex`, the implementation **must** store both `FULLSEND_GCP_SA_KEY_JSON` and `GCP_PROJECT_ID`.
 
 ## 6. Analyze / health semantics for the secrets layer
 

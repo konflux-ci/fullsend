@@ -21,6 +21,11 @@ type DispatchConfig struct {
 	Platform string `yaml:"platform"`
 }
 
+// InferenceConfig configures the inference provider used by agents.
+type InferenceConfig struct {
+	Provider string `yaml:"provider"`
+}
+
 // RepoDefaults holds default settings applied to all repos.
 type RepoDefaults struct {
 	Roles                    []string `yaml:"roles"`
@@ -36,16 +41,22 @@ type RepoConfig struct {
 
 // OrgConfig is the top-level configuration for a fullsend organization.
 type OrgConfig struct {
-	Version  string                `yaml:"version"`
-	Dispatch DispatchConfig        `yaml:"dispatch"`
-	Defaults RepoDefaults          `yaml:"defaults"`
-	Agents   []AgentEntry          `yaml:"agents"`
-	Repos    map[string]RepoConfig `yaml:"repos"`
+	Version   string                `yaml:"version"`
+	Dispatch  DispatchConfig        `yaml:"dispatch"`
+	Inference InferenceConfig       `yaml:"inference,omitempty"`
+	Defaults  RepoDefaults          `yaml:"defaults"`
+	Agents    []AgentEntry          `yaml:"agents"`
+	Repos     map[string]RepoConfig `yaml:"repos"`
 }
 
 // ValidRoles returns the set of recognized agent roles.
 func ValidRoles() []string {
 	return []string{"fullsend", "triage", "coder", "review"}
+}
+
+// ValidProviders returns the set of recognized inference providers.
+func ValidProviders() []string {
+	return []string{"vertex"}
 }
 
 // DefaultAgentRoles returns the standard set of agent roles used
@@ -56,7 +67,7 @@ func DefaultAgentRoles() []string {
 }
 
 // NewOrgConfig creates a new OrgConfig with sensible defaults.
-func NewOrgConfig(allRepos, enabledRepos, roles []string, agents []AgentEntry) *OrgConfig {
+func NewOrgConfig(allRepos, enabledRepos, roles []string, agents []AgentEntry, inferenceProvider string) *OrgConfig {
 	repos := make(map[string]RepoConfig, len(allRepos))
 	for _, r := range allRepos {
 		repos[r] = RepoConfig{
@@ -64,7 +75,7 @@ func NewOrgConfig(allRepos, enabledRepos, roles []string, agents []AgentEntry) *
 		}
 	}
 
-	return &OrgConfig{
+	cfg := &OrgConfig{
 		Version: "1",
 		Dispatch: DispatchConfig{
 			Platform: "github-actions",
@@ -77,6 +88,10 @@ func NewOrgConfig(allRepos, enabledRepos, roles []string, agents []AgentEntry) *
 		Agents: agents,
 		Repos:  repos,
 	}
+	if inferenceProvider != "" {
+		cfg.Inference = InferenceConfig{Provider: inferenceProvider}
+	}
+	return cfg
 }
 
 // ParseOrgConfig parses YAML bytes into an OrgConfig.
@@ -118,6 +133,12 @@ func (c *OrgConfig) Validate() error {
 	for _, role := range c.Defaults.Roles {
 		if !slices.Contains(valid, role) {
 			return fmt.Errorf("invalid role %q: must be one of %s", role, strings.Join(valid, ", "))
+		}
+	}
+	if c.Inference.Provider != "" {
+		validProviders := ValidProviders()
+		if !slices.Contains(validProviders, c.Inference.Provider) {
+			return fmt.Errorf("invalid inference provider %q: must be one of %s", c.Inference.Provider, strings.Join(validProviders, ", "))
 		}
 	}
 	return nil

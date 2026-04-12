@@ -15,6 +15,8 @@ import (
 	"github.com/fullsend-ai/fullsend/internal/config"
 	"github.com/fullsend-ai/fullsend/internal/forge"
 	gh "github.com/fullsend-ai/fullsend/internal/forge/github"
+	"github.com/fullsend-ai/fullsend/internal/inference"
+	"github.com/fullsend-ai/fullsend/internal/inference/vertex"
 	"github.com/fullsend-ai/fullsend/internal/layers"
 	"github.com/fullsend-ai/fullsend/internal/ui"
 )
@@ -79,6 +81,9 @@ func newInstallCmd() *cobra.Command {
 	var agents string
 	var dryRun bool
 	var skipAppSetup bool
+	var gcpProject string
+	var gcpServiceAccount string
+	var gcpCredentialsFile string
 
 	cmd := &cobra.Command{
 		Use:   "install <org>",
@@ -111,8 +116,32 @@ func newInstallCmd() *cobra.Command {
 				roles[i] = strings.TrimSpace(roles[i])
 			}
 
+			// Validate GCP flag dependencies.
+			if gcpProject == "" && (gcpServiceAccount != "" || gcpCredentialsFile != "") {
+				return fmt.Errorf("--gcp-service-account and --gcp-credentials-file require --gcp-project to be set")
+			}
+
+			// Build inference provider from GCP flags.
+			var inferenceProvider inference.Provider
+			var inferenceProviderName string
+			if gcpProject != "" {
+				vcfg := vertex.Config{ProjectID: gcpProject, ServiceAccountName: gcpServiceAccount}
+				if gcpCredentialsFile != "" {
+					credData, readErr := os.ReadFile(gcpCredentialsFile)
+					if readErr != nil {
+						return fmt.Errorf("reading credentials file: %w", readErr)
+					}
+					vcfg.CredentialJSON = string(credData)
+				}
+				inferenceProvider = vertex.New(vcfg, vertex.NewLiveGCPClient())
+				inferenceProviderName = "vertex"
+			} else {
+				// Preserve existing inference config if no GCP flags provided.
+				inferenceProviderName = loadExistingInferenceProvider(ctx, client, org)
+			}
+
 			if dryRun {
-				return runDryRun(ctx, client, printer, org, repos, roles)
+				return runDryRun(ctx, client, printer, org, repos, roles, inferenceProvider, inferenceProviderName)
 			}
 
 			// Collect agent credentials via app setup.
@@ -125,7 +154,7 @@ func newInstallCmd() *cobra.Command {
 				agentCreds = creds
 			}
 
-			return runInstall(ctx, client, printer, org, repos, roles, agentCreds)
+			return runInstall(ctx, client, printer, org, repos, roles, agentCreds, inferenceProvider, inferenceProviderName)
 		},
 	}
 
@@ -133,6 +162,9 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agents, "agents", "fullsend,triage,coder,review", "comma-separated agent roles")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview changes without making them")
 	cmd.Flags().BoolVar(&skipAppSetup, "skip-app-setup", false, "skip GitHub App creation/setup")
+	cmd.Flags().StringVar(&gcpProject, "gcp-project", "", "GCP project ID for Vertex AI inference")
+	cmd.Flags().StringVar(&gcpServiceAccount, "gcp-service-account", "", "existing GCP service account name (optional, used with --gcp-project)")
+	cmd.Flags().StringVar(&gcpCredentialsFile, "gcp-credentials-file", "", "path to pre-made GCP service account key JSON (optional, used with --gcp-project)")
 
 	return cmd
 }
@@ -220,7 +252,7 @@ func newAnalyzeCmd() *cobra.Command {
 }
 
 // runDryRun builds a layer stack with empty credentials and analyzes.
-func runDryRun(ctx context.Context, client forge.Client, printer *ui.Printer, org string, enabledRepos, roles []string) error {
+func runDryRun(ctx context.Context, client forge.Client, printer *ui.Printer, org string, enabledRepos, roles []string, inferenceProvider inference.Provider, inferenceProviderName string) error {
 	printer.Header("Dry run - analyzing what install would do")
 	printer.Blank()
 
@@ -234,7 +266,7 @@ func runDryRun(ctx context.Context, client forge.Client, printer *ui.Printer, or
 	hasPrivate := hasPrivateRepos(allRepos)
 
 	// Build config with empty agents for analysis.
-	cfg := config.NewOrgConfig(repoNames, enabledRepos, roles, nil)
+	cfg := config.NewOrgConfig(repoNames, enabledRepos, roles, nil, inferenceProviderName)
 
 	user, err := client.GetAuthenticatedUser(ctx)
 	if err != nil {
@@ -250,7 +282,7 @@ func runDryRun(ctx context.Context, client forge.Client, printer *ui.Printer, or
 	}
 
 	enrolledRepoIDs := collectEnrolledRepoIDs(allRepos, enabledRepos)
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs)
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs, inferenceProvider)
 
 	if err := runPreflight(ctx, stack, layers.OpInstall, client, printer); err != nil {
 		return err
@@ -301,7 +333,7 @@ func runAppSetup(ctx context.Context, client forge.Client, printer *ui.Printer, 
 }
 
 // runInstall performs the full installation.
-func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, org string, enabledRepos, roles []string, agentCreds []layers.AgentCredentials) error {
+func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, org string, enabledRepos, roles []string, agentCreds []layers.AgentCredentials, inferenceProvider inference.Provider, inferenceProviderName string) error {
 	printer.Header("Discovering repositories")
 
 	allRepos, err := client.ListOrgRepos(ctx, org)
@@ -325,7 +357,7 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 		agents[i] = ac.AgentEntry
 	}
 
-	cfg := config.NewOrgConfig(repoNames, enabledRepos, roles, agents)
+	cfg := config.NewOrgConfig(repoNames, enabledRepos, roles, agents, inferenceProviderName)
 
 	user, err := client.GetAuthenticatedUser(ctx)
 	if err != nil {
@@ -334,7 +366,7 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 
 	// Build stack with empty dispatch token for preflight — we check scopes
 	// before prompting the user so we fail early on missing admin:org.
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs)
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, "", enrolledRepoIDs, inferenceProvider)
 
 	if err := runPreflight(ctx, stack, layers.OpInstall, client, printer); err != nil {
 		return err
@@ -367,7 +399,7 @@ func runInstall(ctx context.Context, client forge.Client, printer *ui.Printer, o
 	}
 
 	// Rebuild stack with the actual dispatch token.
-	stack = buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs)
+	stack = buildLayerStack(org, client, cfg, printer, user, hasPrivate, enabledRepos, defaultBranches, agentCreds, dispatchToken, enrolledRepoIDs, inferenceProvider)
 
 	printer.Header("Installing layers")
 	printer.Blank()
@@ -412,11 +444,12 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 
 	// Build a minimal stack for uninstall.
 	// Only ConfigRepoLayer matters for uninstall since other layers are no-ops.
-	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil)
+	emptyCfg := config.NewOrgConfig(nil, nil, nil, nil, "")
 	stack := layers.NewStack(
 		layers.NewConfigRepoLayer(org, client, emptyCfg, printer, false),
 		layers.NewWorkflowsLayer(org, client, printer, ""),
 		layers.NewSecretsLayer(org, client, nil, printer),
+		layers.NewInferenceLayer(org, client, nil, printer),
 		layers.NewDispatchTokenLayer(org, client, "", nil, printer),
 		layers.NewEnrollmentLayer(org, client, nil, nil, printer),
 	)
@@ -524,14 +557,23 @@ func runAnalyze(ctx context.Context, client forge.Client, printer *ui.Printer, o
 		})
 	}
 
-	cfg := config.NewOrgConfig(repoNames, nil, defaultRoles, nil)
+	cfg := config.NewOrgConfig(repoNames, nil, defaultRoles, nil, "")
 
 	user, err := client.GetAuthenticatedUser(ctx)
 	if err != nil {
 		return fmt.Errorf("getting authenticated user: %w", err)
 	}
 
-	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, nil, defaultBranches, agentCreds, "", nil)
+	// Try to detect inference provider from existing config.
+	var inferenceProvider inference.Provider
+	if cfgData, cfgErr := client.GetFileContent(ctx, org, forge.ConfigRepoName, "config.yaml"); cfgErr == nil {
+		if existingCfg, parseErr := config.ParseOrgConfig(cfgData); parseErr == nil && existingCfg.Inference.Provider != "" {
+			// For analyze, we only need SecretNames() — no GCP client needed.
+			inferenceProvider = vertex.New(vertex.Config{ProjectID: "analyze"}, nil)
+		}
+	}
+
+	stack := buildLayerStack(org, client, cfg, printer, user, hasPrivate, nil, defaultBranches, agentCreds, "", nil, inferenceProvider)
 
 	if err := runPreflight(ctx, stack, layers.OpAnalyze, client, printer); err != nil {
 		return err
@@ -554,11 +596,13 @@ func buildLayerStack(
 	agentCreds []layers.AgentCredentials,
 	dispatchToken string,
 	enrolledRepoIDs []int64,
+	inferenceProvider inference.Provider,
 ) *layers.Stack {
 	return layers.NewStack(
 		layers.NewConfigRepoLayer(org, client, cfg, printer, hasPrivate),
 		layers.NewWorkflowsLayer(org, client, printer, user),
 		layers.NewSecretsLayer(org, client, agentCreds, printer),
+		layers.NewInferenceLayer(org, client, inferenceProvider, printer),
 		layers.NewDispatchTokenLayer(org, client, dispatchToken, enrolledRepoIDs, printer),
 		layers.NewEnrollmentLayer(org, client, enabledRepos, defaultBranches, printer),
 	)
@@ -639,6 +683,21 @@ func printAnalysis(ctx context.Context, stack *layers.Stack, printer *ui.Printer
 	}
 
 	return nil
+}
+
+// loadExistingInferenceProvider reads the inference provider name from
+// an existing config.yaml in .fullsend, if available. This prevents
+// re-installs without --gcp-project from silently erasing the inference section.
+func loadExistingInferenceProvider(ctx context.Context, client forge.Client, org string) string {
+	data, err := client.GetFileContent(ctx, org, forge.ConfigRepoName, "config.yaml")
+	if err != nil {
+		return ""
+	}
+	cfg, err := config.ParseOrgConfig(data)
+	if err != nil {
+		return ""
+	}
+	return cfg.Inference.Provider
 }
 
 // loadKnownSlugs tries to read agent slugs from an existing config.

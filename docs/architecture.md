@@ -38,7 +38,7 @@ Infrastructure platform choice and configuration are specified in the adopting o
 **Decided:**
 
 - Forge abstraction: all forge operations go through the `forge.Client` interface, keeping the rest of the codebase forge-agnostic ([ADR 0005](ADRs/0005-forge-abstraction-layer.md)).
-- Installation model: ordered layer stack (install forward, uninstall reverse, analyze for status reporting) with idempotent operations ([ADR 0006](ADRs/0006-ordered-layer-model.md)).
+- Installation model: ordered layer stack (install forward, uninstall reverse, analyze for status reporting) with idempotent operations. Current stack: config-repo → workflows → secrets → inference → dispatch-token → enrollment ([ADR 0006](ADRs/0006-ordered-layer-model.md)).
 - Cross-repo dispatch: `workflow_dispatch` with an org-level dispatch token replaces `workflow_call`, keeping App PEM secrets in the config repo ([ADR 0008](ADRs/0008-workflow-dispatch-for-cross-repo-dispatch.md)).
 - Shim workflow security: `pull_request_target` prevents PR authors from modifying the shim to exfiltrate the dispatch token ([ADR 0009](ADRs/0009-pull-request-target-in-shim-workflows.md)).
 
